@@ -1,0 +1,464 @@
+[
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 1,
+        "fields": {
+            "question_text": "I can keep my eyes on a page or text video for 5 minutes.",
+            "category": "RF",
+            "category_num":"RF1",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 2,
+        "fields": {
+            "question_text": "I can read a short page and tell the main idea.",
+            "category": "RF",
+            "category_num":"RF2",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 3,
+        "fields": {
+            "question_text": " If I get distracted while reading, I try to refocus quickly.",
+            "category": "RF",
+            "category_num":"RF3",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 4,
+        "fields": {
+            "question_text": "I can watch a moving ball on the screen and keep my eyes on it.",
+            "category": "VT",
+            "category_num":"VT1",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 5,
+        "fields": {
+            "question_text": "I can ignore other moving things and keep looking at the ball. ",
+            "category": "VT",
+            "category_num":"VT2",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 6,
+        "fields": {
+            "question_text": " I can follow a moving object for 5–10 minutes. ",
+            "category": "VT",
+            "category_num":"VT3",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 7,
+        "fields": {
+            "question_text": "I can listen to a 5‑minute story or lesson without zoning out.",
+            "category": "AL",
+            "category_num":"AL1",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 8,
+        "fields": {
+            "question_text": "I can tell what happened in the story or lesson. ",
+            "category": "AL",
+            "category_num":"AL2",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 9,
+        "fields": {
+            "question_text": "If my mind wanders while listening, I bring my focus back. ",
+            "category": "AL",
+            "category_num":"AL3",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 10,
+         "fields": {
+            "question_text": " I turn off notifications or ask for quiet when I need to focus.",
+            "category": "SR",
+            "category_num":"SR1",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 11,
+        "fields": {
+            "question_text": "I finish what I’m doing before opening a new app or tab",
+            "category": "SR",
+            "category_num":"SR2",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 12,
+        "fields": {
+            "question_text": "My seat and light help me pay attention. ",
+            "category": "SR",
+            "category_num":"SR3",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 13,
+        "fields": {
+            "question_text": "I overlook or miss details in homework or chores",
+            "category": "N",
+            "category_num":"N1",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 14,
+        "fields": {
+            "question_text": " I make careless mistakes in schoolwork or other activities. ",
+            "category": "N",
+            "category_num":"N2",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 15,
+        "fields": {
+            "question_text": "My work is often not accurate because I don’t pay enough attention to details. ",
+            "category": "N",
+            "category_num":"N3",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 16,
+        "fields": {
+            "question_text": "I have trouble staying focused on tasks",
+            "category": "N",
+            "category_num":"N4",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 17,
+        "fields": {
+            "question_text": "I struggle to plan and decide which tasks to do first. ",
+            "category": "N",
+            "category_num":"N5",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 18,
+        "fields": {
+            "question_text": "I have difficulty following instructions at school or at home. ",
+            "category": "N",
+            "category_num":"N6",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 19,
+        "fields": {
+            "question_text": "I seem distracted or don’t respond when someone speaks to me. ",
+            "category": "N",
+            "category_num":"N7",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 20,
+        "fields": {
+            "question_text": "I put off tasks that need long concentration, like homework. ",
+            "category": "N",
+            "category_num":"N8",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 21,
+        "fields": {
+            "question_text": "I lose interest quickly in activities that need long focus.",
+            "category": "N",
+            "category_num":"N9",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 22,
+        "fields": {
+            "question_text": "I can read a page of text and remember the main point.",
+            "category": "RF",
+            "category_num":"RF1",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 23,
+        "fields": {
+            "question_text": "I can keep my eyes on the text for at least 5–10 minutes without drifting off.",
+            "category": "RF",
+            "category_num":"RF2",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 24,
+        "fields": {
+            "question_text": " If my mind wanders while reading, I notice quickly and bring it back. ",
+            "category": "RF",
+            "category_num":"RF3",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 25,
+        "fields": {
+            "question_text": "I can keep my eyes on a moving object on screen even if other objects move around it.",
+            "category": "VT",
+            "category_num":"VT1",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 26,
+        "fields": {
+            "question_text": " I can ignore on‑screen distractions and keep attention on the target.",
+            "category": "VT",
+            "category_num":"VT2",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 27,
+        "fields": {
+            "question_text": "I can follow motion on screen for at least 5–10 minutes without zoning out.",
+            "category": "VT",
+            "category_num":"VT3",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 28,
+        "fields": {
+            "question_text": " I can follow a 5–10 minute talk or lesson without zoning out",
+            "category": "AL",
+            "category_num":"AL1",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 29,
+        "fields": {
+            "question_text": "I remember the key points from a short lecture or video. ",
+            "category": "AL",
+            "category_num":"AL2",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 30,
+        "fields": {
+            "question_text": "If my attention drifts during a talk, I bring it back quickly. ",
+            "category": "AL",
+            "category_num":"AL3",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 31,
+        "fields": {
+            "question_text": "I minimize notifications or interruptions when I need to focus",
+            "category": "SR",
+            "category_num":"SR1",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 32,
+        "fields": {
+            "question_text": " I can stay on one task without switching to unrelated apps or tabs. ",
+            "category": "SR",
+            "category_num":"SR2",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 33,
+        "fields": {
+            "question_text": " I set up my environment (chair, light, posture) so focusing is easier. ",
+            "category": "SR",
+            "category_num":"SR3",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 34,
+        "fields": {
+            "question_text": "Do you overlook or miss details in assignments or tasks. ",
+            "category": "N",
+            "category_num":"N1",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 35,
+        "fields": {
+            "question_text": "Do you make careless mistakes in schoolwork or other activities.",
+            "category": "N",
+            "category_num":"N2",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 36,
+        "fields": {
+            "question_text": "Do you produce work that is often inaccurate due to a lack of attention to detail. ",
+            "category": "N",
+            "category_num":"N3",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 37,
+        "fields": {
+            "question_text": "Do you have trouble staying focused on tasks.",
+            "category": "N",
+            "category_num":"N4",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 38,
+        "fields": {
+            "question_text": "Are you struggling to manage and prioritize tasks effectively",
+            "category": "N",
+            "category_num":"N5",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 39,
+        "fields": {
+            "question_text": "Do you have difficulty following through on instructions in workplace or in school.",
+            "category": "N",
+            "category_num":"N6",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 40,
+        "fields": {
+            "question_text": "Appearing distracted, not responding, misunderstanding instructions, seeming to ignore when speaking directly.",
+            "category": "N",
+            "category_num":"N7",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 41,
+        "fields": {
+            "question_text": "Putting off tasks that require long periods of concentration, such as homework or detailed work projects. ",
+            "category": "N",
+            "category_num":"N8",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 42,
+        "fields": {
+            "question_text": "Quickly losing interest in activities that require sustained focus. ",
+            "category": "N",
+            "category_num":"N9",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    }
+]

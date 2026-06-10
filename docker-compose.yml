@@ -1,0 +1,50 @@
+version: '3.10'
+services:
+  backend: &backend-service
+    build:
+      dockerfile: Dockerfile
+    user: root
+    command: >
+      sh -c "sleep 3 &&
+             export DJANGO_SETTINGS_MODULE=project_adhd.settings &&
+             python manage.py makemigrations && 
+             python manage.py migrate && 
+             python manage.py loaddata self_assessment_seeder_new.json && 
+             daphne -b 0.0.0.0 -p 8000 project_adhd.asgi:application"
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=project_adhd.settings
+      - PYTHONPATH=/app
+      - DB_HOST=db
+      - DB_NAME=adhd
+      - DB_USER=adhd
+      - DB_PASS=adhd
+      - DB_PORT=3306
+      - DEBUG=TRUE
+      - SECRET_KEY=django-insecure-r_imkl#w$sadasd%$^&&ww_lt2tq76@1us8ab_sn9k4y^0(*$&p
+    volumes:
+      - ./:/app
+    depends_on:
+      - db
+      - redis
+  db:
+    image: mysql:8.0
+    hostname: db
+    ports:
+      - "8082:3306"
+    environment:
+      MYSQL_DATABASE: adhd
+      MYSQL_USER: adhd
+      MYSQL_PASSWORD: adhd
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - mysql_data:/var/lib/mysql/
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  mysql_data:

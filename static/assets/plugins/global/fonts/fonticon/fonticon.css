@@ -1,0 +1,105 @@
+@charset "UTF-8";
+@font-face { font-family: "flaticon"; src: url("./flaticon.ttf?44df81452722ee16b4871221b3a52b25") format("truetype"), url("./flaticon.woff?44df81452722ee16b4871221b3a52b25") format("woff"), url("./flaticon.woff2?44df81452722ee16b4871221b3a52b25") format("woff2"), url("./flaticon.eot?44df81452722ee16b4871221b3a52b25#iefix") format("embedded-opentype"), url("./flaticon.svg?44df81452722ee16b4871221b3a52b25#flaticon") format("svg"); }
+
+i[class^="flaticon-"]:before, i[class*=" flaticon-"]:before { font-family: flaticon !important; font-style: normal; font-weight: normal !important; font-variant: normal; text-transform: none; line-height: 1; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+.flaticon-delivery:before { content: ""; }
+
+.flaticon-bicycle:before { content: ""; }
+
+.flaticon-bookmark:before { content: ""; }
+
+.flaticon-like:before { content: ""; }
+
+.flaticon-microphone:before { content: ""; }
+
+.flaticon-location:before { content: ""; }
+
+.flaticon-gallery:before { content: ""; }
+
+.flaticon-share:before { content: ""; }
+
+.flaticon-star:before { content: ""; }
+
+.flaticon-trash-bin:before { content: ""; }
+
+.flaticon-user-2:before { content: ""; }
+
+.flaticon-view:before { content: ""; }
+
+.flaticon-user:before { content: ""; }
+
+.flaticon-pin:before { content: ""; }
+
+.flaticon-chat:before { content: ""; }
+
+.flaticon-home:before { content: ""; }
+
+.flaticon-mail:before { content: ""; }
+
+.flaticon-settings:before { content: ""; }
+
+.flaticon-alignment-right:before { content: ""; }
+
+.flaticon-link:before { content: ""; }
+
+.flaticon-attach:before { content: ""; }
+
+.flaticon-smile:before { content: ""; }
+
+.flaticon-moon:before { content: ""; }
+
+.flaticon-sun:before { content: ""; }
+
+.flaticon-train:before { content: ""; }
+
+.flaticon-eclipse:before { content: ""; }
+
+.flaticon-drone:before { content: ""; }
+
+.flaticon-truck:before { content: ""; }
+
+.flaticon-ship:before { content: ""; }
+
+.flaticon-offline:before { content: ""; }
+
+.flaticon-printer:before { content: ""; }
+
+.flaticon-paperclip:before { content: ""; }
+
+.flaticon-attachments:before { content: ""; }
+
+.flaticon-attachment:before { content: ""; }
+
+.flaticon-dogecoin:before { content: ""; }
+
+.flaticon-bitcoin:before { content: ""; }
+
+.flaticon-setting:before { content: ""; }
+
+.flaticon-headset:before { content: ""; }
+
+.flaticon-play:before { content: ""; }
+
+.flaticon-pause:before { content: ""; }
+
+.flaticon-next:before { content: ""; }
+
+.flaticon-back:before { content: ""; }
+
+.flaticon-shuffle:before { content: ""; }
+
+.flaticon-repeat:before { content: ""; }
+
+.flaticon-outgoing-call:before { content: ""; }
+
+.flaticon-incoming-call:before { content: ""; }
+
+.flaticon-cash-payment:before { content: ""; }
+
+.flaticon-mobile-payment:before { content: ""; }
+
+.flaticon-card-payment:before { content: ""; }
+
+.flaticon-card:before { content: ""; }
+/*# sourceMappingURL=fonticon.css.map */

@@ -1,0 +1,722 @@
+[
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 1,
+        "fields": {
+            "question_text": "Do you overlook or miss details in assignments or tasks ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 2,
+        "fields": {
+            "question_text": "Do you make careless mistakes in schoolwork or other activities ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 3,
+        "fields": {
+            "question_text": "Do you produce work that is often inaccurate due to a lack of attention to detail ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 4,
+        "fields": {
+            "question_text": "Do you have Trouble staying focused on tasks ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 5,
+        "fields": {
+            "question_text": "Are you Struggling to manage and prioritize tasks effectively ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 6,
+        "fields": {
+            "question_text": "Do you have difficulty following through on instructions in workplace or in school ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 7,
+        "fields": {
+            "question_text": "Appearing distracted, not responding, misunderstanding instructions, Seeming to ignore when speaking directly ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },    
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 8,
+        "fields": {
+            "question_text": "Putting off tasks that require long periods of concentration, such as homework or detailed work projects ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 9,
+        "fields": {
+            "question_text": "Quickly losing interest in activities that require sustained focus ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 10,
+        "fields": {
+            "question_text": "Becoming easily frustrated with tasks that require a lot of mental effort ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 11,
+        "fields": {
+            "question_text": "Starting tasks but not finishing them because they are too demanding ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 12,
+        "fields": {
+            "question_text": "Choosing simpler, less demanding activities over more challenging ones ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 13,
+        "fields": {
+            "question_text": "Misplacing Items: Frequently losing items like school supplies, tools, books, or other materials needed for tasks ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 14,
+        "fields": {
+            "question_text": "Disorganized Workspaces: Having cluttered or disorganized spaces that make it difficult to keep track of belongings ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 15,
+        "fields": {
+            "question_text": "Forgetfulness: Forgetting where items were placed or not remembering to bring essential items to important activities or appointments ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 16,
+        "fields": {
+            "question_text": "Constant Searching: Spending a lot of time searching for misplaced items, leading to frustration and wasted time ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 17,
+        "fields": {
+            "question_text": "Frequently sidetracked by irrelevant distractions ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 18,
+        "fields": {
+            "question_text": "Forget to complete daily tasks. ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 19,
+        "fields": {
+            "question_text": "Do you shows restless behavior, such as moving hands or feet repetitively, tapping, or being unable to sit still ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 20,
+        "fields": {
+            "question_text": "Challenging to participate in recreational activities without being excessively noisy or restless ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 21,
+        "fields": {
+            "question_text": "Constantly moving about, fidgeting, or being unable to remain still for extended periods ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 22,
+        "fields": {
+            "question_text": "Speaks more than is necessary or appropriate for a given situation ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 23,
+        "fields": {
+            "question_text": "Have difficulty controlling the amount or pace of your speech, often interrupting others or dominating conversations ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 24,
+        "fields": {
+            "question_text": "Tendency to respond hastily or prematurely to questions or statements, often without waiting for the speaker to finish ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 25,
+        "fields": {
+            "question_text": "Disruptive in conversations, classrooms, or other settings where listening and thoughtful responses are expected ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 26,
+        "fields": {
+            "question_text": "Challenging to wait for your turn in situations such as conversations, games, or activities ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 27,
+        "fields": {
+            "question_text": "Interrupting others, speaking out of turn, or being impatient while waiting for your opportunity to participate ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":false
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 28,
+        "fields": {
+            "question_text": "Fails to focus on details or makes careless errors, such as with homework ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 29,
+        "fields": {
+            "question_text": "Struggles to maintain attention on tasks that need to be completed ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 30,
+        "fields": {
+            "question_text": "Appears not to listen when addressed directly ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 31,
+        "fields": {
+            "question_text": "Fails to follow directions and complete tasks, despite understanding and not refusing to do so ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 32,
+        "fields": {
+            "question_text": "Struggles to organize tasks and activities ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 33,
+        "fields": {
+            "question_text": "Reluctant to begin tasks that demand sustained mental effort ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 34,
+        "fields": {
+            "question_text": "Frequently misplaces items needed for tasks or activities, such as toys, assignments,pens, or books ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 35,
+        "fields": {
+            "question_text": "Is easily distracted by noises or other external stimuli ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 36,
+        "fields": {
+            "question_text": "Forgetfulness ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 37,
+        "fields": {
+            "question_text": "Fidgets with hands or feet or squirms in seat; leaves seat when expected to remain seated ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 38,
+        "fields": {
+            "question_text": "Gets up when staying seated is expected ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 39,
+        "fields": {
+            "question_text": "Moves about excessively or climbs when expected to remain seated ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 40,
+        "fields": {
+            "question_text": "Struggles with initiating or engaging in quiet play activities ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 41,
+        "fields": {
+            "question_text": "Is often on the go or acts as if driven by a motor ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 42,
+        "fields": {
+            "question_text": "Talks excessively. ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 43,
+        "fields": {
+            "question_text": "Blurts out answers before questions have been completed ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 44,
+        "fields": {
+            "question_text": "Struggles with waiting for their turn ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 45,
+        "fields": {
+            "question_text": "Interrupts or intrudes on other's conversations or activities; argues with adults ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_parent_checklist":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 46,
+        "fields": {
+            "question_text": "Do you overlook or miss details in your work or when completing task ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 47,
+        "fields": {
+            "question_text": "Do you make careless mistakes in your work or other activities ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 48,
+        "fields": {
+            "question_text": "Do you produce work that is often inaccurate due to a lack of attention to detail ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 49,
+        "fields": {
+            "question_text": "Do you have Trouble staying focused on tasks ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 50,
+        "fields": {
+            "question_text": "Are you Struggling to manage and prioritize tasks effectively ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 51,
+        "fields": {
+            "question_text": "Do you have difficulty following through on instructions in workplace or anywhere else ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 52,
+        "fields": {
+            "question_text": "Appearing distracted, not responding, misunderstanding instructions, seeming to ignore when speaking directly ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 53,
+        "fields": {
+            "question_text": "Putting off tasks that require long periods of concentration ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 54,
+        "fields": {
+            "question_text": "Quickly losing interest in activities that require sustained focus ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 55,
+        "fields": {
+            "question_text": "Becoming easily frustrated with tasks that require a lot of mental effort ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 56,
+        "fields": {
+            "question_text": "Starting tasks but not finishing them because they are too demanding ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 57,
+        "fields": {
+            "question_text": "Choosing simpler, less demanding activities over more challenging ones ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 58,
+        "fields": {
+            "question_text": "Misplacing Items: Frequently losing items like s tools, books, laptop or other materials needed for tasks ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 59,
+        "fields": {
+            "question_text": "Disorganized Workspaces: Having cluttered or disorganized spaces that make it difficult to keep track of belongings ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 60,
+        "fields": {
+            "question_text": "Forgetfulness: Forgetting where items were placed or not remembering to bring essential items to important activities or appointments ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 61,
+        "fields": {
+            "question_text": "Constant Searching: Spending a lot of time searching for misplaced items, leading to frustration and wasted time ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 62,
+        "fields": {
+            "question_text": "Frequently sidetracked by irrelevant distractions ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 63,
+        "fields": {
+            "question_text": "Forget to complete daily tasks ?",
+            "category": "INATTENTION_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 64,
+        "fields": {
+            "question_text": "Do you shows restless behavior, such as moving hands or feet repetitively, tapping, or being unable to sit still ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 65,
+        "fields": {
+            "question_text": "Challenging to participate in recreational activities without being excessively noisy or restless ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 66,
+        "fields": {
+            "question_text": "Constantly moving about, fidgeting, or being unable to remain still for extended periods ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 67,
+        "fields": {
+            "question_text": "Speaks more than is necessary or appropriate for a given situation ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 68,
+        "fields": {
+            "question_text": "Have difficulty controlling the amount or pace of your speech, often interrupting others or dominating conversations ?",
+            "category": "HYPERACTIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 69,
+        "fields": {
+            "question_text": "Tendency to respond hastily or prematurely to questions or statements, often without waiting for the speaker to finish ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 70,
+        "fields": {
+            "question_text": "Disruptive in conversations, classrooms, or other settings where listening and thoughtful responses are expected ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 71,
+        "fields": {
+            "question_text": "Challenging to wait for your turn in situations such as conversations, games, or activities ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    },
+    {
+        "model": "assessment.SelfAssessmentQuestions",
+        "pk": 72,
+        "fields": {
+            "question_text": "Interrupting others, speaking out of turn, or being impatient while waiting for your opportunity to participate ?",
+            "category": "IMPULSIVE_SYMPTOMS",
+            "is_active": true,
+            "is_for_adults":true
+        }
+    }
+]
