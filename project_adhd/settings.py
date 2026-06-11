@@ -59,7 +59,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://*.ngrok.io',  # For older ngrok versionsdddd
     'https://*.ngrok-free.app',  # For newer ngrok versions
     'https://*.firstprinciples.uk',
-    "https://antenna-comparable-sleeping-cardiovascular.trycloudflare.com",
+    " https://return-indicated-boating-packard.trycloudflare.com",
 ]
 
 
@@ -69,7 +69,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000", 
     "https://dev.firstprinciples.uk",
     "https://uat.firstprinciples.uk",
-    "https://antenna-comparable-sleeping-cardiovascular.trycloudflare.com",
+    " https://return-indicated-boating-packard.trycloudflare.com",
 ]
 
 X_FRAME_OPTIONS = 'ALLOWALL'
