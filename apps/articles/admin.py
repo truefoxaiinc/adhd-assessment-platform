@@ -3,8 +3,10 @@ from .models import Article
 # Register your models here.
 
 
+from import_export.admin import ImportExportModelAdmin
+
 @admin.register(Article)
-class ArticleAdmin(admin.ModelAdmin):
+class ArticleAdmin(ImportExportModelAdmin):
     list_display = ("id", "title", "author", "status", "published_at", "created_at")
     list_filter = ("status", "is_featured", "published_at")
     search_fields = ("title", "author__username")
