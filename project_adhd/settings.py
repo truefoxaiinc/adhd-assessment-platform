@@ -55,21 +55,11 @@ DEBUG = get_env_value('DEBUG', True)
 ALLOWED_HOSTS = ['*']
 
 CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:8000',
-    'https://*.ngrok.io',  # For older ngrok versionsdddd
-    'https://*.ngrok-free.app',  # For newer ngrok versions
-    'https://*.firstprinciples.uk',
-    "https://clay-general-enhance-root.trycloudflare.com",
+    "https://13.217.234.177",
 ]
 
-
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000", 
-    "http://127.0.0.1:8000",
-    "http://127.0.0.1:3000", 
-    "https://dev.firstprinciples.uk",
-    "https://uat.firstprinciples.uk",
-    "https://clay-general-enhance-root.trycloudflare.com",
+    "https://13.217.234.177",
 ]
 
 X_FRAME_OPTIONS = 'ALLOWALL'
@@ -125,6 +115,7 @@ THIRD_PARTY_APPS = [
     'corsheaders',
     'storages',
     'channels',
+    'import_export',
 ]
 
 INSTALLED_APPS = INSTALLED_APPS + LOCAL_APPS  + THIRD_PARTY_APPS

@@ -4,8 +4,10 @@ from django.contrib import admin
 from .models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse, ADHDDocument
 
 
+from import_export.admin import ImportExportModelAdmin
+
 @admin.register(SelfAssessmentQuestions)
-class SelfAssessmentQuestionsAdmin(admin.ModelAdmin):
+class SelfAssessmentQuestionsAdmin(ImportExportModelAdmin):
     list_display = (
         'id',
         'created_by',
