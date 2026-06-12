@@ -39,6 +39,8 @@ class GetSelfAssessmentQuestionsListApiView(generics.GenericAPIView):
             user_instance   = get_token_user_or_none(request)
             is_for_adults   = bool(user_instance.adult)
 
+            print(f"is Adult :{is_for_adults}")
+
             cache_key = get_questions_cache_key(request, is_for_adults)
             cached_data = cache_get(cache_key)
             if cached_data:
@@ -95,7 +97,7 @@ class SelfAssessmentResponseApiView(generics.GenericAPIView):
             try:
                 user_instance = get_token_user_or_none(request)
                 all_questions = SelfAssessmentQuestions.objects.filter(
-                    is_for_adults=user_instance.adult, 
+                    is_for_adults=bool(user_instance.adult), 
                     is_active=True
                 ).values_list('id', 'question_text')
 

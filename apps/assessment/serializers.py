@@ -75,7 +75,7 @@ class SelfAssessmentResponseSerializer(serializers.ModelSerializer):
             sub_serializer.is_valid(raise_exception=True)
             sub_serializer.save()
 
-        is_adult = user_instance.adult
+        is_adult = bool(user_instance.adult)
 
         instance = ResultService(instance,is_adult).calculate_selfassessment()
 
