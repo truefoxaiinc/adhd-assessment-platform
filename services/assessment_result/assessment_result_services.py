@@ -21,31 +21,33 @@ class ResultService:
                 return 3
             
     def calculate_selfassessment(self):
+        from django.db.models.functions import Cast
+
         totals = self.initial_query.aggregate(
             raw_total=Sum(
                 Case(
-                    When(Q(question__is_for_adults=self.is_adult), then='response'),
+                    When(Q(question__is_for_adults=self.is_adult), then=Cast('response', IntegerField())),
                     default=0,
                     output_field=IntegerField(),
                 )
             ),
             read_focus_total=Sum(
                 Case(
-                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='RF'), then='response'),
+                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='RF'), then=Cast('response', IntegerField())),
                     default=0,
                     output_field=IntegerField(),
                 )
             ),
             visual_tracking_total=Sum(
                 Case(
-                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='VT'), then='response'),
+                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='VT'), then=Cast('response', IntegerField())),
                     default=0,
                     output_field=IntegerField(),
                 )
             ),
             audio_listening_total=Sum(
                 Case(
-                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='AL'), then='response'),
+                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='AL'), then=Cast('response', IntegerField())),
                     default=0,
                     output_field=IntegerField(),
                 )
