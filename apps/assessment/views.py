@@ -37,7 +37,7 @@ class GetSelfAssessmentQuestionsListApiView(generics.GenericAPIView):
 
         try:
             user_instance   = get_token_user_or_none(request)
-            is_for_adults   = user_instance.adult
+            is_for_adults   = bool(user_instance.adult)
 
             cache_key = get_questions_cache_key(request, is_for_adults)
             cached_data = cache_get(cache_key)
@@ -223,7 +223,7 @@ class SelfAssessmentProgressApiView(generics.GenericAPIView):
     def get(self, request):
         try:
             user_instance = get_token_user_or_none(request)
-            is_for_adults = user_instance.adult
+            is_for_adults = bool(user_instance.adult)
 
             requested_question_id = request.query_params.get('question_id')
             cache_key = get_progress_cache_key(user_instance.id, is_for_adults)
