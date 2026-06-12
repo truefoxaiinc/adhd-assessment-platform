@@ -39,8 +39,6 @@ class GetSelfAssessmentQuestionsListApiView(generics.GenericAPIView):
             user_instance   = get_token_user_or_none(request)
             is_for_adults   = bool(user_instance.adult)
 
-            print(f"is Adult :{is_for_adults}")
-
             cache_key = get_questions_cache_key(request, is_for_adults)
             cached_data = cache_get(cache_key)
             if cached_data:
@@ -93,35 +91,6 @@ class SelfAssessmentResponseApiView(generics.GenericAPIView):
 
             instance = serializer.save()
 
-            # --- Log Answered and Unanswered Questions ---
-            try:
-                user_instance = get_token_user_or_none(request)
-                all_questions = SelfAssessmentQuestions.objects.filter(
-                    is_for_adults=bool(user_instance.adult), 
-                    is_active=True
-                ).values_list('id', 'question_text')
-
-                answered_question_ids = SelfAssessmentResponse.objects.filter(
-                    result_entry=instance
-                ).values_list('question_id', flat=True)
-
-                answered = [q for q in all_questions if q[0] in answered_question_ids]
-                unanswered = [q for q in all_questions if q[0] not in answered_question_ids]
-
-                log_lines = ["\n=== Answered Questions ==="]
-                for q in answered:
-                    log_lines.append(f"ID: {q[0]} - {q[1]}")
-
-                log_lines.append("\n=== Unanswered Questions ===")
-                for q in unanswered:
-                    log_lines.append(f"ID: {q[0]} - {q[1]}")
-                log_lines.append("==========================\n")
-                
-                logger.info("\n".join(log_lines))
-            except Exception as e:
-                logger.error(f"Error logging questions status: {str(e)}")
-            # -----------------------------------------------
-
             from .cache import bump_user_result_cache
             bump_user_result_cache(instance.user_id)
 
@@ -140,7 +109,6 @@ class SelfAssessmentResponseApiView(generics.GenericAPIView):
             return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
-            print(f"error is {e}")
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             self.response_format['status_code'] = status.HTTP_500_INTERNAL_SERVER_ERROR
