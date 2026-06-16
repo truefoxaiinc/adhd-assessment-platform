@@ -428,6 +428,32 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         rects = detector(gray, 0)
         faces_count = len(rects)
         flags.face_present = faces_count > 0
+
+        if faces_count == 0:
+            return {
+                "face_detected": False,
+                "concentration_level": "low",
+                "concentration_score": 0,
+                "message": "No clear face landmarks detected",
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "analysis": asdict(AnalysisFlags()),
+                "face_position": {
+                    "server_x": int(x),
+                    "server_y": int(y),
+                    "server_width": int(fw),
+                    "server_height": int(fh),
+                    "client_x": int(client_x),
+                    "client_y": int(client_y),
+                    "client_width": int(client_w),
+                    "client_height": int(client_h),
+                    "frame_width": int(frame_width),
+                    "frame_height": int(frame_height),
+                },
+                "recommendations": ["Ensure your face is clearly visible and well-lit"],
+                "metrics": {
+                    "faces_count": 0,
+                },
+            }
         
         # Initialize metrics
         gaze_ratio = 1.0

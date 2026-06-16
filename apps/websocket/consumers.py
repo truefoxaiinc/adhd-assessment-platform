@@ -168,12 +168,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
     async def handle_validate_face(self, data):
         try:
             self.frame_count += 1
-            # Only process every 5th frame (frame 1, 6, 11, ...) to save CPU
-            if self.frame_count % 5 != 1:
-                if self.last_response_data:
-                    self.last_response_data['timestamp'] = datetime.now().isoformat()
-                    await self.send(text_data=json.dumps(self.last_response_data, default=str))
-                return
 
             face_data = data.get('face')
             frame_data = data.get('frame', {'width': self.frame_width, 'height': self.frame_height})
