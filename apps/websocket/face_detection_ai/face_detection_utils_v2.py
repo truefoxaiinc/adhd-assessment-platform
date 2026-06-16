@@ -378,6 +378,16 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         face_center_y = y + fh // 2
         frame_center_x = w // 2
         frame_center_y = h // 2
+
+        client_box_missing = client_w <= 0 or client_h <= 0
+        client_box_is_full_frame = (
+            client_x <= 0
+            and client_y <= 0
+            and client_w >= frame_width * 0.95
+            and client_h >= frame_height * 0.95
+        )
+        if client_box_missing or client_box_is_full_frame:
+            client_x, client_y, client_w, client_h = int(x), int(y), int(fw), int(fh)
         
         # ✅ GEOMETRIC VALIDATION USING CLIENT COORDINATES
         flags = AnalysisFlags()
