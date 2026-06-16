@@ -118,10 +118,10 @@ class FilesActions:
                     else:
                         break
 
-                return file_urls
+            return file_urls
             
         except Exception as e:
-            pass
+            return []
 
 
     @staticmethod

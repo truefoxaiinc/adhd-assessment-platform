@@ -1,9 +1,6 @@
 import pytest
 from channels.testing import WebsocketCommunicator
-from project_adhd.asgi import application
 from apps.websocket.consumers import FaceDetectionConsumer
-from apps.users.models import Users
-import json
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
@@ -31,14 +28,14 @@ class TestFaceDetectionConsumer:
         communicator = WebsocketCommunicator(FaceDetectionConsumer.as_asgi(), "/ws/face-detection/")
         await communicator.connect()
         
-        # We can mock the synchronous database saving or just let it fail gracefully
-        mocker.patch('apps.websocket.consumers.FaceDetectionConsumer.save_assessment_data')
-        
         data = {
-            "event": "endcall",
-            "userid": 1
+            "type": "endcall",
+            "filetype": "video",
+            "day_completed": 1,
+            "order_number": 1
         }
         await communicator.send_json_to(data)
+        response = await communicator.receive_json_from(timeout=1)
+        assert response["type"] == "endcall_processed"
         
-        # Ensure disconnect closes properly
         await communicator.disconnect()

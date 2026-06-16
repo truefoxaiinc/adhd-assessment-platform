@@ -12,6 +12,16 @@ class VideoUploadSerializer(serializers.Serializer):
 
 
 class AdhdContentSerializer(serializers.ModelSerializer):
+    is_locked = serializers.SerializerMethodField()
+
     class Meta:
         model = AdhdContent
-        fields = '__all__'
+        fields = "__all__"
+
+    def get_is_locked(self, obj):
+        unlocked_days = self.context.get("unlocked_days", [])
+
+        if not obj.is_management:
+            return False
+
+        return obj.day not in unlocked_days

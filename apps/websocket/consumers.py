@@ -35,11 +35,12 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.inattention_start = None
         self.frame_count = 0
         self.last_response_data = None
+        self.assessment_score_saved = False
 
     async def connect(self):
         # NO MODEL IMPORTS - safe user ID extraction only
         scope_user = self.scope.get("user")
-        self.user_id = getattr(scope_user, 'id', None) if scope_user else None
+        self.user_id = getattr(scope_user, 'id', None) if scope_user and scope_user.is_authenticated else None
         
         self.session_id = str(uuid.uuid4())[:8]
         self.session_metrics = []
@@ -48,6 +49,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.inattention_start = None
         self.frame_count = 0
         self.last_response_data = None
+        self.assessment_score_saved = False
 
         await self.accept()
         await self.send(text_data=json.dumps({
@@ -65,7 +67,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             },
             'endcall_format': {
                 'type': 'endcall',
-                'filetype': 'video|audio|quiz',
+                'filetype': 'video|file',
                 'day_completed': '1|2|3|... (int day number)',
                 'order_number': 'int'
             }
@@ -150,10 +152,9 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         
         try:
             user_instance = Users.objects.get(id=user_id)
-            ProgressTrackerActions.update_learning_progress(
+            return ProgressTrackerActions.update_learning_progress(
                 user_instance, filetype, day_completed, order_number
             )
-            return True
         except Users.DoesNotExist:
             return False
         except Exception:
@@ -173,9 +174,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     await self.send(text_data=json.dumps(self.last_response_data, default=str))
                 return
 
-            # 🔥 FIX: Store user_id IMMEDIATELY from message
-            self.user_id = data.get('user_id') or self.user_id  # Persist across messages
-            
             face_data = data.get('face')
             frame_data = data.get('frame', {'width': self.frame_width, 'height': self.frame_height})
             frame_base64 = data.get('frame_base64')
@@ -365,7 +363,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         return user.ai_assessment_score
 
     async def _save_assessment_score(self):
-        if not self.user_id or not self.session_metrics:
+        if self.assessment_score_saved or not self.user_id or not self.session_metrics:
             return
 
         avg_concentration = sum(m['concentration_score'] for m in self.session_metrics) / len(self.session_metrics)
@@ -373,3 +371,4 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
 
         await self._create_sessions_sync(self.user_id, self.session_id, self.session_metrics)
         await self._update_user_score_sync(self.user_id, final_score)
+        self.assessment_score_saved = True

@@ -1,4 +1,4 @@
-from django.db.models import Sum, Case, When, IntegerField, Q
+from django.db.models import Q
 from apps.assessment.models import SelfAssessmentResponse,SelfAssessmentResult
 from apps.progresstracker.models import UserAssessmentDetails
 
@@ -15,55 +15,68 @@ class ResultService:
                 return 3
             case _ if tenscore >= 5 and tenscore <= 6:
                 return 2 
-            case _ if tenscore >= 7:
+            case _ if tenscore >= 7 and tenscore <= 8:
                 return 1
+            case _ if tenscore >= 9:
+                return 0
             case _:
                 return 3
-            
-    def calculate_selfassessment(self):
-        from django.db.models.functions import Cast
 
-        totals = self.initial_query.aggregate(
-            raw_total=Sum(
-                Case(
-                    When(Q(question__is_for_adults=self.is_adult), then=Cast('response', IntegerField())),
-                    default=0,
-                    output_field=IntegerField(),
-                )
-            ),
-            read_focus_total=Sum(
-                Case(
-                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='RF'), then=Cast('response', IntegerField())),
-                    default=0,
-                    output_field=IntegerField(),
-                )
-            ),
-            visual_tracking_total=Sum(
-                Case(
-                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='VT'), then=Cast('response', IntegerField())),
-                    default=0,
-                    output_field=IntegerField(),
-                )
-            ),
-            audio_listening_total=Sum(
-                Case(
-                    When(Q(question__is_for_adults=self.is_adult) & Q(question__category='AL'), then=Cast('response', IntegerField())),
-                    default=0,
-                    output_field=IntegerField(),
-                )
-            ),
+    def find_result_label(self, tenscore):
+        match tenscore:
+            case _ if tenscore >= 0 and tenscore <= 4:
+                return "Severe difficulty"
+            case _ if tenscore >= 5 and tenscore <= 6:
+                return "Moderate difficulty"
+            case _ if tenscore >= 7 and tenscore <= 8:
+                return "Mild difficulty"
+            case _ if tenscore >= 9:
+                return "Satisfactory to strong"
+            case _:
+                return "Severe difficulty"
+
+    @staticmethod
+    def get_scored_response(response):
+        response_value = int(response.response or 0)
+        if response.question and response.question.category == 'N':
+            return 4 - response_value
+        return response_value
+
+    def calculate_selfassessment(self):
+        responses = (
+            self.initial_query
+            .select_related('question')
+            .filter(question__is_for_adults=self.is_adult)
         )
-        raw_total = totals['raw_total'] or 0
-        tenscore = round((raw_total/84)*10) 
+
+        raw_total = 0
+        read_focus_total = 0
+        visual_tracking_total = 0
+        audio_listening_total = 0
+
+        for response in responses:
+            scored_response = self.get_scored_response(response)
+            raw_total += scored_response
+
+            match response.question.category:
+                case 'RF':
+                    read_focus_total += scored_response
+                case 'VT':
+                    visual_tracking_total += scored_response
+                case 'AL':
+                    audio_listening_total += scored_response
+
+        tenscore = round((raw_total / 84) * 10)
 
         program_duration =  self.find_program_duration(tenscore)
 
         instance = SelfAssessmentResult.objects.filter(id=self.instance.id).first()
+        instance.result                   = self.find_result_label(tenscore)
         instance.raw_total                = raw_total
         instance.tenscore                 = tenscore
-        instance.read_focus_total         = totals['read_focus_total'] or 0
-        instance.visual_tracking_total    = totals['visual_tracking_total'] or 0
-        instance.audio_listening_total    = totals['audio_listening_total'] or 0
+        instance.read_focus_total         = read_focus_total
+        instance.visual_tracking_total    = visual_tracking_total
+        instance.audio_listening_total    = audio_listening_total
         instance.program_duration         = program_duration
         instance.save()
 

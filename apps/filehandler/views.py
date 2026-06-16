@@ -91,14 +91,23 @@ class ListAllFiles(APIView):
             is_management = request.GET.get("is_management") in ["True", "true", True]
 
             user_instance = get_token_user_or_none(request)
-            age_group = user_instance.age_category if user_instance else "adult"
+            age_group = user_instance.age_category if user_instance and user_instance.age_category else "adult"
+            unlocked_days = ProgressTrackerActions.get_days_for_the_file(user_instance) or [1]
 
             queryset = (
                 AdhdContent.objects
-                .all()
+                .filter(
+                    is_management=is_management,
+                    age_group=age_group,
+                )
+                .order_by("day", "file_type", "order_number")
             )
 
-            serializer = AdhdContentSerializer(queryset, many=True)
+            serializer = AdhdContentSerializer(
+                queryset,
+                many=True,
+                context={"unlocked_days": unlocked_days},
+            )
 
             return Response(
                 {
