@@ -57,6 +57,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             'message': 'WebSocket ready - Send frame as base64 for full analysis',
             'session_id': self.session_id,
             'user_id': self.user_id,
+            'auth_format': 'ws://host/ws/face-detection/?token=access_token',
             'timestamp': datetime.now().isoformat(),
             'expected_format': {
                 'type': 'validate_face',
