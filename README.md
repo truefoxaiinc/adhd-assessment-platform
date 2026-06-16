@@ -1,80 +1,382 @@
 # ADHD-Minder Backend API
 
-This is a Django REST Framework (DRF) based backend application for ADHD assessment and progress tracking. It provides a robust API for user authentication, self-assessment questionnaires, scoring, real-time attention tracking, and file handling.
+ADHD-Minder is a Django REST Framework backend for user authentication, self-assessment, scoring, learning progress tracking, file/content delivery, and real-time face attention tracking through WebSockets.
 
-## 🚀 Features
+The backend supports:
 
-- **Custom Authentication**: JWT-based authentication using `SimpleJWT` with OTP password reset flow.
-- **Assessments & Scoring**: Modular models to handle ADHD self-assessment questions, responses, and automatic scoring across different cognitive categories (Reading Focus, Visual Tracking, Auditory/Listening).
-- **Progress Tracking & WebSockets**: Integration with Django Channels and Redis to support real-time features, paired with Machine Learning libraries (MediaPipe/OpenCV) for face/attention tracking sessions.
-- **API Documentation**: Auto-generated interactive Swagger UI documentation powered by `drf-yasg`.
-- **Cloud Storage**: Configured to handle media uploads securely using AWS S3 buckets.
-- **Dockerized Environment**: Ready-to-use `docker-compose.yml` to orchestrate the Django backend alongside MySQL and Redis databases.
+- JWT authentication and password reset flows.
+- Self-assessment questions, responses, scoring, and progress.
+- ADHD content listing and lock/unlock logic based on user progress.
+- Real-time face/concentration validation using Django Channels, OpenCV, and AI utilities.
+- Learning progress updates after video/file completion.
+- Swagger API documentation.
+- Redis-backed Channels and cache support.
+- Optional AWS S3 media/file storage.
 
-## 🛠️ Technology Stack
+## Tech Stack
 
-- **Framework**: Django 5.x & Django REST Framework (DRF)
-- **Database**: MySQL (Default via Docker) / SQLite (Fallback)
-- **WebSockets**: Django Channels with Redis backing
-- **Machine Learning**: MediaPipe, OpenCV, dlib (for real-time face tracking)
-- **Authentication**: JWT (JSON Web Tokens)
-- **Cloud**: AWS S3 (Media), Firebase (Admin)
-- **Containerization**: Docker & Docker Compose
+- Python 3.11
+- Django 5.x
+- Django REST Framework
+- SimpleJWT
+- Django Channels
+- Daphne
+- Redis
+- PostgreSQL or SQLite, depending on settings
+- OpenCV, MediaPipe, dlib related ML dependencies
+- drf-yasg Swagger docs
+- Docker and Docker Compose
 
-## 📁 Project Structure
+## Project Structure
 
-The project follows a modular Django app structure located in the `/apps/` directory:
-- `users`: Custom User model and profile management.
-- `authentication`: Login, registration, and OTP logic.
-- `assessment`: Models for assessment questions, responses, and result scoring.
-- `progresstracker`: Tracking user's progress and attention sessions.
-- `websocket`: Real-time bi-directional communication channels.
-- `filehandler`: Uploading and managing documents/files.
+```text
+ADHD-Minder-backend/
+  apps/
+    authentication/    Login, logout, JWT, OTP/password reset
+    users/             Custom user model and profile APIs
+    assessment/        Self-assessment questions, responses, scoring
+    filehandler/       ADHD content/file listing and S3 helpers
+    progresstracker/   User learning progress and attention sessions
+    websocket/         Face detection WebSocket consumer and middleware
+    articles/          Article APIs
+  helpers/             Shared response, auth, exception helpers
+  services/            Business logic services
+  project_adhd/        Django settings, urls, ASGI/WSGI
+```
 
-## ⚙️ Local Development Setup
+## Environment Variables
 
-### Option 1: Using Docker (Recommended)
+Create a `.env` file in the project root. Use `.env.example` as the base.
+
+Minimum example:
+
+```env
+SECRET_KEY=your_django_secret_key
+DEBUG=True
+
+DB_NAME=truefoxai_db
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_HOST=127.0.0.1
+DB_PORT=5432
+
+JWT_SECRET_KEY=your_jwt_secret
+
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_STORAGE_BUCKET_NAME=s-adhd
+AWS_S3_REGION_NAME=us-east-1
+
+REDIS_CACHE_URL=redis://127.0.0.1:6379/1
+CELERY_BROKER_URL=redis://127.0.0.1:6379/2
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2
+
+EMAIL_HOST=smtp.gmail.com
+EMAIL_HOST_USER=your_email
+EMAIL_HOST_PASSWORD=your_email_password
+EMAIL_PORT=587
+DEFAULT_FROM_EMAIL=your_email
+
+FIREBASE_CREDENTIALS_PATH=files/attentionminder-3f4d6-firebase-adminsdk-fbsvc-704503bc6e.json
+```
+
+## Running With Docker
+
 Make sure Docker Desktop is running.
+
 ```bash
 docker-compose up --build
 ```
-The API will be available at `http://127.0.0.1:8000/api/docs/`
 
-### Option 2: Native Setup (Without Docker)
-1. Create and activate a virtual environment:
-   ```bash
-   python -m venv venv
-   # On Windows:
-   .\venv\Scripts\activate
-   # On macOS/Linux:
-   source venv/bin/activate
-   ```
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   *(Note: You may need Visual Studio C++ build tools installed on Windows to build dependencies like `dlib` and `face-recognition`).*
-3. Setup the database and run the server:
-   ```bash
-   python manage.py makemigrations
-   python manage.py migrate
-   python manage.py collectstatic --noinput
-   python manage.py runserver
-   ```
+The API will be available at:
 
-## 📝 API Documentation
-Once the server is running, visit:
-- **Swagger UI**: `http://localhost:8000/api/docs/`
+```text
+http://127.0.0.1:8000/api/docs/
+```
 
-## 📊 Code Quality & Improvements
-- **Model Structuring**: The project effectively uses Abstract classes and well-segregated apps.
-- **Future Improvements**: Transition naive datetime instances (`datetime.now()`) to timezone-aware instances (`timezone.now()`) and move all hardcoded fallback secrets into secure `.env` files.
+The WebSocket endpoint will be:
+
+```text
+ws://127.0.0.1:8000/ws/face-detection/?token=ACCESS_TOKEN
+```
+
+## Running Natively
+
+Install Python 3.11 first.
+
+```bash
+python -m venv venv
+```
+
+Activate the environment.
+
+Windows:
+
+```powershell
+.\venv\Scripts\activate
+```
+
+macOS/Linux:
+
+```bash
+source venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run migrations:
+
+```bash
+python manage.py migrate
+```
+
+Run the normal HTTP development server:
+
+```bash
+python manage.py runserver
+```
+
+For WebSocket support, run Daphne:
+
+```bash
+daphne -b 0.0.0.0 -p 8000 project_adhd.asgi:application
+```
+
+## Redis Configuration
+
+For native/server deployment where Redis runs on the same machine:
+
+```python
+"hosts": [("127.0.0.1", 6379)]
+```
+
+For Docker Compose internal networking, the Redis service name can be used:
+
+```python
+"hosts": [("redis", 6379)]
+```
+
+Current server-oriented setting:
+
+```python
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],
+        },
+    },
+}
+```
+
+## API Documentation
+
+Swagger UI:
+
+```text
+http://localhost:8000/api/docs/
+```
+
+Production example:
+
+```text
+http://13.217.234.177/api/docs/
+```
+
+## Authentication
+
+The API uses JWT authentication with SimpleJWT.
+
+HTTP APIs expect:
+
+```http
+Authorization: Bearer ACCESS_TOKEN
+```
+
+WebSocket authentication uses the token query parameter:
+
+```text
+ws://host/ws/face-detection/?token=ACCESS_TOKEN
+```
+
+Do not send `user_id` from the client for WebSocket authentication. The backend reads the authenticated user from the token.
+
+## Main REST API Modules
+
+### Authentication
+
+Base path:
+
+```text
+/api/auth/
+```
+
+Handles login, logout, refresh/blacklist flows, and password reset related actions.
+
+### Users
+
+Base path:
+
+```text
+/api/users/v1/users/
+```
+
+Common APIs:
+
+```text
+registration
+update-profile
+get-user-profile
+password-reset/request
+password-reset/otp-verify
+password-reset/change
+social-login
+```
+
+### Assessment
+
+Base path:
+
+```text
+/api/assessment/v1/self-assessment/
+```
+
+Endpoints:
+
+```text
+GET  get-questions
+POST save-response
+GET  fetch-result
+GET  progress
+```
+
+The assessment app:
+
+- Fetches adult or child/adolescent questions based on user age.
+- Saves user responses.
+- Calculates assessment score.
+- Returns latest result.
+- Returns progress for mobile UI.
+
+Example save response payload:
+
+```json
+{
+  "assesment": [
+    {
+      "question": 1,
+      "response": "2",
+      "text_response": "optional"
+    }
+  ]
+}
+```
+
+Note: The current API key is `assesment` for compatibility with existing code.
+
+### Filehandler
+
+Base path:
+
+```text
+/api/filehandler/v1/filehandler/
+```
+
+Enabled endpoints:
+
+```text
+GET  list-files
+GET  save-feedback
+POST update-learning-progress/
+```
+
+`list-files` returns ADHD content filtered by:
+
+- authenticated user's age group
+- `is_management=true|false`
+- progress-based unlocked days
+
+Example:
+
+```text
+GET /api/filehandler/v1/filehandler/list-files?is_management=true
+```
+
+### WebSocket
+
+WebSocket route:
+
+```text
+/ws/face-detection/
+```
+
+Full URL:
+
+```text
+ws://host/ws/face-detection/?token=ACCESS_TOKEN
+```
+
+## Assessment Score Calculation
+
+The assessment scoring follows the provided assessment PDF.
+
+Response scale:
+
+```text
+0 = Never
+1 = Rarely
+2 = Sometimes
+3 = Often
+4 = Very Often
+```
+
+There are 21 items for adults and 21 items for kids.
+
+Reverse-scored questions:
+
+```text
+N1 to N9
+```
+
+Reverse scoring rule:
+
+```text
+scored_value = 4 - response
+```
+
+Normal questions use:
+
+```text
+scored_value = response
+```
+
+Final calculation:
+
+```text
+Raw Total = sum(scored values)
+TenScore = round((Raw Total / 84) * 10)
+```
+
+Program duration:
+
+```text
+0-4  => Severe difficulty       => 3-month program
+5-6  => Moderate difficulty     => 2-month program
+7-8  => Mild difficulty         => 1-month program
+9-10 => Satisfactory to strong  => maintenance only
+```
+
+The result label is saved into `SelfAssessmentResult.result`.
 
 ## WebSocket Face Detection API
 
 The WebSocket API is used for live face/attention tracking during a video or file session.
-It receives camera frames from the client, analyzes concentration, and sends live feedback
-back to the app. When the session ends, it can update the user's learning progress.
+It receives camera frames from the client, analyzes concentration, and sends live feedback back to the app.
+When the session ends, it can update the user's learning progress and save attention metrics.
 
 ### Connect
 
@@ -124,13 +426,12 @@ If the token is valid, the first response includes the authenticated `user_id`.
 ```
 
 If `user_id` is `null`, the token was not provided or could not be authenticated.
-Live validation can still respond, but progress updates and score saving require an
-authenticated user.
+Live validation can still respond, but progress updates and score saving require an authenticated user.
 
 ### Send Face Validation Data
 
-Send camera frames as base64 images. The `face` object should contain the face bounding
-box detected on the client.
+Send camera frames as base64 images.
+The `face` object should contain the face bounding box detected on the client.
 
 ```json
 {
@@ -150,8 +451,7 @@ box detected on the client.
 }
 ```
 
-The server processes every fifth frame to reduce CPU usage. Frames in between may receive
-the last calculated response.
+The server processes every fifth frame to reduce CPU usage. Frames in between may receive the last calculated response.
 
 ### Validation Response
 
@@ -202,7 +502,7 @@ Response:
 
 ### End Session And Update Progress
 
-Send this when the user completes a video or file:
+Send this when the user completes a video:
 
 ```json
 {
@@ -252,3 +552,111 @@ After this response, the server closes the socket.
 5. Send endcall after the video/file is completed.
 6. Read endcall_processed and let the socket close.
 ```
+
+## Deployment Notes
+
+For a server deployment using systemd, restart after code/config changes:
+
+```bash
+sudo systemctl restart adhd
+```
+
+Manual Daphne command:
+
+```bash
+daphne -b 0.0.0.0 -p 8000 project_adhd.asgi:application
+```
+
+Make sure Redis is running:
+
+```bash
+redis-cli ping
+```
+
+Expected response:
+
+```text
+PONG
+```
+
+## Useful Commands
+
+Run migrations:
+
+```bash
+python manage.py migrate
+```
+
+Create superuser:
+
+```bash
+python manage.py createsuperuser
+```
+
+Collect static files:
+
+```bash
+python manage.py collectstatic --noinput
+```
+
+Run Django checks:
+
+```bash
+python manage.py check
+```
+
+Run tests:
+
+```bash
+python -m pytest
+```
+
+## Troubleshooting
+
+### WebSocket connects but `user_id` is null
+
+Cause: token is missing or invalid.
+
+Fix:
+
+```text
+ws://host/ws/face-detection/?token=ACCESS_TOKEN
+```
+
+### Redis connection fails
+
+If running natively, use:
+
+```python
+"hosts": [("127.0.0.1", 6379)]
+```
+
+If running inside Docker Compose, use:
+
+```python
+"hosts": [("redis", 6379)]
+```
+
+### Docker cannot connect
+
+Start Docker Desktop, then run:
+
+```bash
+docker-compose up --build
+```
+
+### Native Python does not run
+
+Install Python 3.11 and recreate the virtual environment:
+
+```bash
+python -m venv venv
+```
+
+## Notes
+
+- Keep secrets out of Git.
+- Use `.env` for credentials and deployment configuration.
+- Use Daphne for WebSocket support.
+- Use JWT query authentication for WebSocket clients.
+- Do not trust `user_id` from client payloads for progress or score updates.
