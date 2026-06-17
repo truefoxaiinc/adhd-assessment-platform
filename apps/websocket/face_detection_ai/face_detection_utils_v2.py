@@ -40,7 +40,7 @@ predictor = dlib.shape_predictor(PREDICTOR_PATH)
 # CONSTANTS / STATE
 # --------------------------
 GAZE_LOW = 0.6
-GAZE_HIGH = 2.5
+GAZE_HIGH = 3.5
 HEAD_LIMIT = 25
 INATTENTION_LIMIT = 4.0
 READING_WINDOW = 10.0
@@ -539,9 +539,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         if gaze_in_video_zone:
             can_keep_watching = (
                 last_attention_state == "watching_video"
-                and concentration_score >= 7
+                and concentration_score >= 6
             )
-            if concentration_score >= 8 or can_keep_watching:
+            if concentration_score >= 7 or can_keep_watching:
                 engagement_info["state"] = "watching_video"
                 engagement_info["video_attentive"] = True
             else:
