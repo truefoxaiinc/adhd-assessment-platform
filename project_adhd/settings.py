@@ -79,7 +79,7 @@ CHANNEL_LAYERS = {
     },
 }
 
-# Application definition
+# Application definitionaaa
 
 INSTALLED_APPS = [
     'django.contrib.admin',

@@ -173,6 +173,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             frame_data = data.get('frame', {'width': self.frame_width, 'height': self.frame_height})
             frame_base64 = data.get('frame_base64')
             is_assessment = data.get('is_assessment', False)
+            mode = data.get('mode', 'video')
+            pdf_is_visible = data.get('pdf_is_visible', False)
 
             if not face_data:
                 await self.send_error('Face data is required')
@@ -201,7 +203,9 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'frame_bgr': frame_bgr,
                 'gaze_history': self.gaze_history,
                 'blink_history': self.blink_history,
-                'inattention_start': self.inattention_start
+                'inattention_start': self.inattention_start,
+                'mode': mode,
+                'pdf_is_visible': pdf_is_visible,
             }
 
             if self.validation_settings.get('custom_tolerance'):

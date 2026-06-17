@@ -306,6 +306,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         frame_width = face_data.get("frame_width", 640)
         frame_height = face_data.get("frame_height", 480)
         custom_settings = face_data.get("custom_settings", {}) or {}
+        mode = face_data.get("mode", "video")
+        pdf_is_visible = bool(face_data.get("pdf_is_visible", False))
         
         # Extract state passed from consumer
         gaze_history = face_data.get("gaze_history") if face_data.get("gaze_history") is not None else deque()
@@ -526,6 +528,27 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         else:
             concentration_level = "low"
             msg = "Poor concentration - please adjust position"
+
+        gaze_in_video_zone = engagement_info.get("video_attentive", False)
+        gaze_in_pdf_zone = engagement_info.get("reading_focus", False)
+
+        if gaze_in_video_zone:
+            if concentration_score >= 8:
+                engagement_info["state"] = "watching_video"
+                engagement_info["video_attentive"] = True
+            else:
+                engagement_info["state"] = "idle_distracted"
+                engagement_info["video_attentive"] = False
+        elif mode == "reading" and gaze_in_pdf_zone and pdf_is_visible:
+            engagement_info["state"] = "reading_pdf"
+            engagement_info["video_attentive"] = False
+        else:
+            engagement_info["state"] = "idle_distracted"
+            engagement_info["video_attentive"] = False
+
+        engagement_info["reading_focus"] = (
+            mode == "reading" and gaze_in_pdf_zone and pdf_is_visible
+        )
         
         # Generate recommendations
         recommendations = []
