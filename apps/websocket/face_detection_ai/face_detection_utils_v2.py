@@ -312,6 +312,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         # Extract state passed from consumer
         gaze_history = face_data.get("gaze_history") if face_data.get("gaze_history") is not None else deque()
         blink_history = face_data.get("blink_history") if face_data.get("blink_history") is not None else deque()
+        score_history = face_data.get("score_history") if face_data.get("score_history") is not None else deque(maxlen=5)
         inattention_start = face_data.get("inattention_start")
         
         # ✅ USE FRAME PROVIDED BY CLIENT (decoded from base64 by consumer)
@@ -517,7 +518,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         flags.reading_pattern = engagement_info.get("reading_focus", False)
         
         # ✅ CONCENTRATION SCORE (0-8 flags)
-        concentration_score = sum(bool(v) for v in asdict(flags).values())
+        raw_concentration_score = sum(bool(v) for v in asdict(flags).values())
+        score_history.append(raw_concentration_score)
+        concentration_score = round(sum(score_history) / len(score_history))
         
         if concentration_score >= 6:
             concentration_level = "high"
@@ -597,6 +600,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "center_deviation_x": round(x_diff / float(frame_width), 4),
                 "center_deviation_y": round(y_diff / float(frame_height), 4),
                 "size_ratio": round(client_w / float(frame_width), 4),
+                "raw_concentration_score": raw_concentration_score,
+                "score_window_size": len(score_history),
                 "gaze_ratio": round(gaze_ratio, 4),
                 "pitch": round(pitch, 2),
                 "yaw": round(yaw, 2),

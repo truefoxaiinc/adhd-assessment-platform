@@ -32,6 +32,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         import collections
         self.gaze_history = collections.deque()
         self.blink_history = collections.deque()
+        self.score_history = collections.deque(maxlen=5)
         self.inattention_start = None
         self.frame_count = 0
         self.last_response_data = None
@@ -46,6 +47,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.session_metrics = []
         self.gaze_history.clear()
         self.blink_history.clear()
+        self.score_history.clear()
         self.inattention_start = None
         self.frame_count = 0
         self.last_response_data = None
@@ -203,6 +205,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'frame_bgr': frame_bgr,
                 'gaze_history': self.gaze_history,
                 'blink_history': self.blink_history,
+                'score_history': self.score_history,
                 'inattention_start': self.inattention_start,
                 'mode': mode,
                 'pdf_is_visible': pdf_is_visible,
