@@ -248,7 +248,10 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'analysis': result.get('analysis', {}),
                     'face_position': result.get('face_position', {}),
                     'recommendations': result.get('recommendations', []),
-                    'validation_passed': result.get('concentration_level', '') in ['high', 'medium'],
+                    'validation_passed': (
+                        result.get('face_detected', False)
+                        and result.get('concentration_level', '') in ['high', 'medium']
+                    ),
                     'metrics': result.get('metrics', {}),
                     'engagement': result.get('engagement', {})
                 },

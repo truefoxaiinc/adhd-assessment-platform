@@ -346,6 +346,44 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         h, w = frame_bgr.shape[:2]
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         gray = cv2.equalizeHist(gray) 
+
+        # Require a real ML Kit face box from the same frame. Server-side
+        # detectors can false-positive on background, so they should not turn
+        # a no-face frame into a successful validation.
+        client_box_missing = client_w <= 0 or client_h <= 0
+        client_box_is_full_frame = (
+            client_x <= 0
+            and client_y <= 0
+            and client_w >= frame_width * 0.95
+            and client_h >= frame_height * 0.95
+        )
+        client_box_out_of_frame = (
+            client_x < 0
+            or client_y < 0
+            or client_x + client_w > frame_width
+            or client_y + client_h > frame_height
+        )
+        if client_box_missing or client_box_is_full_frame or client_box_out_of_frame:
+            return {
+                "face_detected": False,
+                "concentration_level": "low",
+                "concentration_score": 0,
+                "message": "No valid client face box received",
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "analysis": asdict(AnalysisFlags()),
+                "face_position": {
+                    "client_x": int(client_x),
+                    "client_y": int(client_y),
+                    "client_width": int(client_w),
+                    "client_height": int(client_h),
+                    "frame_width": int(frame_width),
+                    "frame_height": int(frame_height),
+                },
+                "recommendations": ["Ensure your face is visible before sending the frame"],
+                "metrics": {
+                    "faces_count": 0,
+                },
+            }
         
         # ✅ DETECT FACES WITH HAAR CASCADE ON PROVIDED FRAME
         faces_haar = face_detection.detectMultiScale(
@@ -383,16 +421,6 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         frame_center_x = w // 2
         frame_center_y = h // 2
 
-        client_box_missing = client_w <= 0 or client_h <= 0
-        client_box_is_full_frame = (
-            client_x <= 0
-            and client_y <= 0
-            and client_w >= frame_width * 0.95
-            and client_h >= frame_height * 0.95
-        )
-        if client_box_missing or client_box_is_full_frame:
-            client_x, client_y, client_w, client_h = int(x), int(y), int(fw), int(fh)
-        
         # ✅ GEOMETRIC VALIDATION USING CLIENT COORDINATES
         flags = AnalysisFlags()
         
