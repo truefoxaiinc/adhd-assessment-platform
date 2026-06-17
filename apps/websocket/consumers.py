@@ -37,6 +37,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.frame_count = 0
         self.last_response_data = None
         self.assessment_score_saved = False
+        self.last_attention_state = "idle_distracted"
 
     async def connect(self):
         # NO MODEL IMPORTS - safe user ID extraction only
@@ -52,6 +53,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.frame_count = 0
         self.last_response_data = None
         self.assessment_score_saved = False
+        self.last_attention_state = "idle_distracted"
 
         await self.accept()
         await self.send(text_data=json.dumps({
@@ -209,6 +211,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'inattention_start': self.inattention_start,
                 'mode': mode,
                 'pdf_is_visible': pdf_is_visible,
+                'last_attention_state': self.last_attention_state,
             }
 
             if self.validation_settings.get('custom_tolerance'):
@@ -220,6 +223,10 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
 
             if 'inattention_start' in result:
                 self.inattention_start = result['inattention_start']
+            self.last_attention_state = result.get('engagement', {}).get(
+                'state',
+                self.last_attention_state,
+            )
 
             # Track metrics if user_id exists & face detected
             if result.get('face_detected') and self.user_id:

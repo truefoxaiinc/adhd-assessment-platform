@@ -308,6 +308,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         custom_settings = face_data.get("custom_settings", {}) or {}
         mode = face_data.get("mode", "video")
         pdf_is_visible = bool(face_data.get("pdf_is_visible", False))
+        last_attention_state = face_data.get("last_attention_state", "idle_distracted")
         
         # Extract state passed from consumer
         gaze_history = face_data.get("gaze_history") if face_data.get("gaze_history") is not None else deque()
@@ -536,7 +537,11 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         gaze_in_pdf_zone = engagement_info.get("reading_focus", False)
 
         if gaze_in_video_zone:
-            if concentration_score >= 8:
+            can_keep_watching = (
+                last_attention_state == "watching_video"
+                and concentration_score >= 7
+            )
+            if concentration_score >= 8 or can_keep_watching:
                 engagement_info["state"] = "watching_video"
                 engagement_info["video_attentive"] = True
             else:
