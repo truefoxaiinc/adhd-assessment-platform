@@ -228,13 +228,15 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 self.last_attention_state,
             )
 
-            # Track metrics if user_id exists & face detected
-            if result.get('face_detected') and self.user_id:
+            # Track every assessment frame. No-face/invalid frames must count
+            # as zero; otherwise the final score can remain high because only
+            # successful face frames are averaged.
+            if self.user_id:
                 self.session_metrics.append({
-                    'concentration_score': result['concentration_score'],
-                    'gaze_ratio': result['metrics'].get('gaze_ratio', 1.0),
-                    'inattention_duration': result['engagement'].get('inattention_duration', 0.0),
-                    'drowsy_state': result['metrics'].get('drowsy_state', 0.2)
+                    'concentration_score': result.get('concentration_score', 0),
+                    'gaze_ratio': result.get('metrics', {}).get('gaze_ratio', 0.0),
+                    'inattention_duration': result.get('engagement', {}).get('inattention_duration', 0.0),
+                    'drowsy_state': result.get('metrics', {}).get('drowsy_state', 0.8)
                 })
 
             response_data = {
