@@ -19,6 +19,7 @@ class PrivateMediaStorage(S3Boto3Storage):
 class LargeMediaStorage(PublicMediaStorage):
     """Storage backend for large admin-uploaded videos."""
 
+    querystring_auth = True
     object_parameters = {
         "CacheControl": "max-age=86400",
     }
