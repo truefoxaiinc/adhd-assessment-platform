@@ -1,36 +1,69 @@
 # -*- coding: utf-8 -*-
 from django.contrib import admin
+from django.utils.html import format_html
+from unfold.admin import ModelAdmin
 
 from .models import UserAssessmentDetails, ProgressTracker, FaceAttentionSession
 
 
 @admin.register(UserAssessmentDetails)
-class UserAssessmentDetailsAdmin(admin.ModelAdmin):
+class UserAssessmentDetailsAdmin(ModelAdmin):
     list_display = (
         'id',
         'user',
         'course_duration',
         'last_completed',
+        'completion_status',
         'started_on',
     )
     list_filter = ('user', 'started_on')
+    search_fields = ('user__email', 'user__username')
+    date_hierarchy = 'started_on'
+    list_per_page = 25
+
+    @admin.display(description='Status')
+    def completion_status(self, obj):
+        if obj.is_day_completed:
+            return format_html('<span class="text-green-700 font-semibold">Completed</span>')
+        return format_html('<span class="text-amber-700 font-semibold">In progress</span>')
 
 
 @admin.register(ProgressTracker)
-class ProgressTrackerAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'day_number', 'file_type', 'order_number', 'is_day_completed')
-    list_filter = ('user', 'is_day_completed')
+class ProgressTrackerAdmin(ModelAdmin):
+    list_display = ('id', 'user', 'day_number', 'file_type', 'order_number', 'completion_badge')
+    list_filter = ('user', 'file_type', 'is_day_completed')
+    search_fields = ('user__email', 'user__username', 'order_number')
+    ordering = ('user', 'day_number', 'order_number')
+    list_per_page = 25
+
+    @admin.display(description='Completion', boolean=True, ordering='is_day_completed')
+    def completion_badge(self, obj):
+        return obj.is_day_completed
 
 @admin.register(FaceAttentionSession)
-class FaceAttentionSessionAdmin(admin.ModelAdmin):
+class FaceAttentionSessionAdmin(ModelAdmin):
     list_display = (
         'id',
         'user',
         'session_id',
         'concentration_score',
+        'focus_status',
         'gaze_ratio_avg',
         'inattention_duration',
         'drowsy_state',
         'created_at',
     )
     list_filter = ('user', 'created_at')
+    search_fields = ('user__email', 'user__username', 'session_id')
+    date_hierarchy = 'created_at'
+    ordering = ('-created_at',)
+    list_per_page = 25
+
+    @admin.display(description='Focus band', ordering='concentration_score')
+    def focus_status(self, obj):
+        score = obj.concentration_score
+        if score >= 70:
+            return format_html('<span class="text-green-700 font-semibold">Strong</span>')
+        if score >= 50:
+            return format_html('<span class="text-amber-700 font-semibold">Watch</span>')
+        return format_html('<span class="text-red-700 font-semibold">Low</span>')

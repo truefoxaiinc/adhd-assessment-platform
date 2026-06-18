@@ -28,6 +28,10 @@ from rest_framework import permissions
 from django.views.generic import RedirectView
 
 
+admin.site.site_header = "ADHD Minder Admin"
+admin.site.site_title = "ADHD Minder"
+admin.site.index_title = "Operations Console"
+
 schema_view             = get_schema_view(
         openapi.Info(
         title             = "ADHD API",

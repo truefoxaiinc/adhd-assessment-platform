@@ -14,6 +14,8 @@ from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
 import datetime
 from decouple import config
+from django.urls import reverse_lazy
+from django.utils.translation import gettext_lazy as _
 
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
@@ -82,6 +84,8 @@ CHANNEL_LAYERS = {
 # Application definitionaaa
 
 INSTALLED_APPS = [
+    'unfold',
+    'unfold.contrib.import_export',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -119,6 +123,87 @@ THIRD_PARTY_APPS = [
 ]
 
 INSTALLED_APPS = INSTALLED_APPS + LOCAL_APPS  + THIRD_PARTY_APPS
+
+UNFOLD = {
+    "SITE_TITLE": "ADHD Minder",
+    "SITE_HEADER": "ADHD Minder",
+    "SITE_SUBHEADER": "Operations Console",
+    "SITE_SYMBOL": "psychology",
+    "SITE_URL": "/api/docs/",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "BORDER_RADIUS": "8px",
+    "DASHBOARD_CALLBACK": "project_adhd.admin_dashboard.dashboard_callback",
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": True,
+        "navigation": [
+            {
+                "title": _("Core"),
+                "separator": True,
+                "items": [
+                    {
+                        "title": _("Dashboard"),
+                        "icon": "dashboard",
+                        "link": reverse_lazy("admin:index"),
+                    },
+                    {
+                        "title": _("Users"),
+                        "icon": "group",
+                        "link": reverse_lazy("admin:users_users_changelist"),
+                    },
+                    {
+                        "title": _("Assessments"),
+                        "icon": "quiz",
+                        "link": reverse_lazy("admin:assessment_selfassessmentquestions_changelist"),
+                    },
+                    {
+                        "title": _("Progress"),
+                        "icon": "monitoring",
+                        "link": reverse_lazy("admin:progresstracker_progresstracker_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _("Content"),
+                "separator": True,
+                "items": [
+                    {
+                        "title": _("Articles"),
+                        "icon": "article",
+                        "link": reverse_lazy("admin:articles_article_changelist"),
+                    },
+                    {
+                        "title": _("ADHD Content"),
+                        "icon": "folder_open",
+                        "link": reverse_lazy("admin:filehandler_adhdcontent_changelist"),
+                    },
+                    {
+                        "title": _("Documents"),
+                        "icon": "description",
+                        "link": reverse_lazy("admin:assessment_adhddocument_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _("Insights"),
+                "separator": True,
+                "items": [
+                    {
+                        "title": _("Attention Sessions"),
+                        "icon": "visibility",
+                        "link": reverse_lazy("admin:progresstracker_faceattentionsession_changelist"),
+                    },
+                    {
+                        "title": _("Feedback"),
+                        "icon": "reviews",
+                        "link": reverse_lazy("admin:filehandler_feedbackreview_changelist"),
+                    },
+                ],
+            },
+        ],
+    },
+}
 
 MIDDLEWARE = [
     'project_adhd.middleware.HealthCheckMiddleware',
@@ -162,25 +247,26 @@ AUTH_USER_MODEL = 'users.Users'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
+DATABASE_ENGINE = config('DATABASE_ENGINE', default='sqlite').lower()
 
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='truefoxai_db'),
-        'USER': config('DB_USER', default='postgres'),
-        'PASSWORD': config('DB_PASSWORD', default='252562'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
+if DATABASE_ENGINE == 'postgres':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('DB_NAME', default='truefoxai_db'),
+            'USER': config('DB_USER', default='postgres'),
+            'PASSWORD': config('DB_PASSWORD', default='252562'),
+            'HOST': config('DB_HOST', default='localhost'),
+            'PORT': config('DB_PORT', default='5432'),
+        }
     }
-}
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 CACHES = {
     "default": {
@@ -335,7 +421,6 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_LIFETIME': datetime.timedelta(days=20),
     'SLIDING_TOKEN_REFRESH_LIFETIME': datetime.timedelta(days=50),
 }
-get_env_value('DB_NAME','alcandb'),
 
 EMAIL_BACKEND         = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST            = config('EMAIL_HOST', default='smtp.gmail.com')

@@ -1,27 +1,24 @@
 # -*- coding: utf-8 -*-
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.utils.html import format_html
+from unfold.admin import ModelAdmin
 
 from .models import Users, PasswordResetOTP
 
 
 @admin.register(Users)
-class UsersAdmin(DjangoUserAdmin):
+class UsersAdmin(ModelAdmin, DjangoUserAdmin):
     list_display = (
         'id',
-        'last_login',
         'email',
         'username',
+        'account_status',
+        'staff_status',
         'dob',
         'gender',
         'country',
-        'height',
-        'weight',
-        'is_verified',
-        'is_admin',
-        'is_staff',
-        'is_superuser',
-        'is_deleted',
+        'last_login',
     )
     list_display_links = ('id', 'email', 'username')
     list_filter = (
@@ -37,6 +34,25 @@ class UsersAdmin(DjangoUserAdmin):
     ordering = ('-id',)
     raw_id_fields = ('groups', 'user_permissions')
     readonly_fields = ('last_login',)
+    list_per_page = 25
+
+    @admin.display(description='Account')
+    def account_status(self, obj):
+        if obj.is_deleted:
+            return format_html('<span class="text-red-700 font-semibold">Deleted</span>')
+        if obj.is_verified:
+            return format_html('<span class="text-green-700 font-semibold">Verified</span>')
+        return format_html('<span class="text-amber-700 font-semibold">Pending</span>')
+
+    @admin.display(description='Role')
+    def staff_status(self, obj):
+        if obj.is_superuser:
+            return format_html('<span class="text-purple-700 font-semibold">Superuser</span>')
+        if obj.is_admin:
+            return format_html('<span class="text-blue-700 font-semibold">Admin</span>')
+        if obj.is_staff:
+            return format_html('<span class="text-slate-700 font-semibold">Staff</span>')
+        return format_html('<span class="text-slate-500">User</span>')
 
     fieldsets = (
         (None, {'fields': ('email', 'username', 'password')}),
@@ -63,7 +79,9 @@ class UsersAdmin(DjangoUserAdmin):
 
 
 @admin.register(PasswordResetOTP)
-class PasswordResetOTPAdmin(admin.ModelAdmin):
+class PasswordResetOTPAdmin(ModelAdmin):
     list_display = ('id', 'user', 'otp', 'created_at', 'expires_at')
     list_filter = ('user', 'created_at', 'expires_at')
+    search_fields = ('user__email', 'user__username', 'otp')
     date_hierarchy = 'created_at'
+    list_per_page = 25
