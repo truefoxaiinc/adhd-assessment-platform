@@ -193,14 +193,8 @@ class FileUploadView(APIView):
             ExtraArgs={"ContentType": content_type},
             Config=settings.AWS_S3_TRANSFER_CONFIG,
         )
-        file_url = s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": settings.AWS_STORAGE_BUCKET_NAME, "Key": s3_key},
-            ExpiresIn=3600,
-        )
-
         return Response(
-            {"detail": "Uploaded", "s3_key": s3_key, "file_url": file_url},
+            {"detail": "Uploaded", "s3_key": s3_key},
             status=status.HTTP_201_CREATED,
         )
 

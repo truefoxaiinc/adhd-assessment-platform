@@ -5,7 +5,6 @@ from apps.articles.models import Article
 class ArticleSerializer(serializers.ModelSerializer):
     author_name = serializers.CharField(source='author.username', read_only=True)
     featured_image = serializers.ImageField(read_only=True)
-    featured_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Article
@@ -16,7 +15,6 @@ class ArticleSerializer(serializers.ModelSerializer):
             'short_description',
             'content',
             'featured_image',
-            'featured_image_url',
             'author',
             'author_name',
             'status',
@@ -32,10 +30,5 @@ class ArticleSerializer(serializers.ModelSerializer):
         if not title:
             raise serializers.ValidationError("Title is required.")
         return super().validate(attrs)
-
-    def get_featured_image_url(self, obj):
-        if not obj.featured_image:
-            return None
-        return obj.featured_image.url
     
     
