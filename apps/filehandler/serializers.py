@@ -13,6 +13,7 @@ class VideoUploadSerializer(serializers.Serializer):
 
 class AdhdContentSerializer(serializers.ModelSerializer):
     is_locked = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = AdhdContent
@@ -25,3 +26,8 @@ class AdhdContentSerializer(serializers.ModelSerializer):
             return False
 
         return obj.day not in unlocked_days
+
+    def get_file_url(self, obj):
+        if not obj.file:
+            return None
+        return obj.file.url

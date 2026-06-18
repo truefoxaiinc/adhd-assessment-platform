@@ -9,6 +9,7 @@ from rest_framework.views import APIView
 from apps.filehandler.services.files_services import FilesActions
 from .models import AdhdContent
 import os,boto3
+import mimetypes
 from django.conf import settings
 from drf_yasg import openapi
 
@@ -177,16 +178,29 @@ class FileUploadView(APIView):
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             region_name=settings.AWS_S3_REGION_NAME,
+            config=settings.AWS_S3_CLIENT_CONFIG,
         )
 
+        content_type = (
+            getattr(uploaded_file, "content_type", None)
+            or mimetypes.guess_type(uploaded_file.name)[0]
+            or "application/octet-stream"
+        )
         s3_client.upload_fileobj(
             uploaded_file,
             settings.AWS_STORAGE_BUCKET_NAME,
             s3_key,
+            ExtraArgs={"ContentType": content_type},
+            Config=settings.AWS_S3_TRANSFER_CONFIG,
+        )
+        file_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.AWS_STORAGE_BUCKET_NAME, "Key": s3_key},
+            ExpiresIn=3600,
         )
 
         return Response(
-            {"detail": "Uploaded", "s3_key": s3_key},
+            {"detail": "Uploaded", "s3_key": s3_key, "file_url": file_url},
             status=status.HTTP_201_CREATED,
         )
 
