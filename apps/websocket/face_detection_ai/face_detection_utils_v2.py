@@ -144,7 +144,7 @@ def get_gaze_ratio(frame, gray, eye_points, landmarks) -> float:
     if gray_eye.size == 0:
         return 1.0
     
-    _, threshold_eye = cv2.threshold(gray_eye, 70, 255, cv2.THRESH_BINARY)
+    _, threshold_eye = cv2.threshold(gray_eye, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     h_t, w_t = threshold_eye.shape
     
     left_side = threshold_eye[:, 0:int(w_t / 2)]
@@ -159,6 +159,7 @@ def get_gaze_ratio(frame, gray, eye_points, landmarks) -> float:
         return 5.0
     
     return left_white / float(right_white)
+
 
 def get_head_pose(shape_np: np.ndarray) -> Tuple[float, float, float]:
     """Calculate head pose (pitch, yaw, roll) using PnP"""

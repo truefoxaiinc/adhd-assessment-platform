@@ -54,16 +54,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default='default-secret-key')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = get_env_value('DEBUG', True)
+DEBUG = get_env_value('DEBUG', False)
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in config("ALLOWED_HOSTS", default="localhost,127.0.0.1,13.217.234.177").split(",")
+    if host.strip()
+]
 
 CSRF_TRUSTED_ORIGINS = [
-    "https://13.217.234.177",
+    origin.strip()
+    for origin in config("CSRF_TRUSTED_ORIGINS", default="https://13.217.234.177").split(",")
+    if origin.strip()
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "https://13.217.234.177",
+    origin.strip()
+    for origin in config("CORS_ALLOWED_ORIGINS", default="https://13.217.234.177").split(",")
+    if origin.strip()
 ]
 
 X_FRAME_OPTIONS = 'ALLOWALL'
@@ -331,7 +339,7 @@ AWS_S3_SIGNATURE_VERSION = 's3v4'
 AWS_S3_ADDRESSING_STYLE = 'virtual'
 AWS_S3_USE_SSL = True
 AWS_S3_VERIFY = True
-AWS_DEFAULT_ACL = "public-read"
+AWS_DEFAULT_ACL = None
 AWS_QUERYSTRING_AUTH = True
 AWS_S3_FILE_OVERWRITE = False
 AWS_S3_OBJECT_PARAMETERS = {
