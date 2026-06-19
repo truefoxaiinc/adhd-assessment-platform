@@ -41,7 +41,6 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
             instance.country,
             instance.height,
             instance.weight,
-            instance.profile_image,
         ]
         return all(bool(value) for value in required_fields)
 
