@@ -525,6 +525,18 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         
         # ✅ DLIB FACIAL LANDMARKS ON ACTUAL FRAME
         rects = detector(gray, 0)
+        if len(rects) == 0:
+            # Mobile ML Kit has already validated the face box on the same
+            # frame. Use it as a landmark fallback when dlib's full-frame
+            # detector misses intermittent mobile frames.
+            rects = [
+                dlib.rectangle(
+                    int(client_x),
+                    int(client_y),
+                    int(client_x + client_w),
+                    int(client_y + client_h),
+                )
+            ]
         faces_count = len(rects)
         flags.face_present = faces_count > 0
 
