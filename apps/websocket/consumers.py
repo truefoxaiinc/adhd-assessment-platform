@@ -205,6 +205,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'frame_width': frame_data.get('width', self.frame_width),
                 'frame_height': frame_data.get('height', self.frame_height),
                 'frame_bgr': frame_bgr,
+                'expected_fps': 30,
+                'frame_time_seconds': self.frame_count / 30.0,
                 'gaze_history': self.gaze_history,
                 'blink_history': self.blink_history,
                 'score_history': self.score_history,

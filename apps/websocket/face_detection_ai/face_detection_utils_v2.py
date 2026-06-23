@@ -42,6 +42,8 @@ predictor = dlib.shape_predictor(PREDICTOR_PATH)
 GAZE_LOW = 0.6
 GAZE_HIGH = 3.5
 HEAD_LIMIT = 25
+EXPECTED_FPS = 30
+LOW_LIGHT_THRESHOLD = 80.0
 INATTENTION_LIMIT = 4.0
 READING_WINDOW = 10.0
 READING_MIN_AMP = 0.3
@@ -87,6 +89,11 @@ class AnalysisFlags:
     not_drowsy: bool = False
     face_present: bool = False
     reading_pattern: bool = False
+
+def build_analysis(flags: AnalysisFlags, low_light: bool = False) -> Dict[str, Any]:
+    analysis = asdict(flags)
+    analysis["low_light"] = bool(low_light)
+    return analysis
 
 # --------------------------
 # Low-level helpers
@@ -209,10 +216,20 @@ def compute_gaze_dynamics(window: float, gaze_history: deque) -> Dict[str, float
     freq = (direction_changes / 2.0) / duration
     return {"freq": freq, "amp": amp}
 
-def update_engagement(gaze_ratio, drowsy_state, pitch, yaw, faces_count, settings, gaze_history, inattention_start):
+def update_engagement(
+    gaze_ratio,
+    drowsy_state,
+    pitch,
+    yaw,
+    faces_count,
+    settings,
+    gaze_history,
+    inattention_start,
+    frame_time_seconds=None,
+):
     """Update engagement state based on gaze, head pose, and drowsiness"""
-    
-    now = time.time()
+
+    now = frame_time_seconds if frame_time_seconds is not None else time.time()
     gaze_history.append((now, gaze_ratio))
     
     while gaze_history and (now - gaze_history[0][0] > settings["reading_window"]):
@@ -310,12 +327,30 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         mode = face_data.get("mode", "video")
         pdf_is_visible = bool(face_data.get("pdf_is_visible", False))
         last_attention_state = face_data.get("last_attention_state", "idle_distracted")
+        expected_fps = float(face_data.get("expected_fps", EXPECTED_FPS) or EXPECTED_FPS)
+        frame_time_seconds = face_data.get("frame_time_seconds")
+        if frame_time_seconds is None:
+            frame_time_seconds = time.time()
+        else:
+            frame_time_seconds = float(frame_time_seconds)
         
         # Extract state passed from consumer
         gaze_history = face_data.get("gaze_history") if face_data.get("gaze_history") is not None else deque()
         blink_history = face_data.get("blink_history") if face_data.get("blink_history") is not None else deque()
         score_history = face_data.get("score_history") if face_data.get("score_history") is not None else deque(maxlen=5)
         inattention_start = face_data.get("inattention_start")
+
+        settings = {
+            "gaze_low": custom_settings.get("gaze_low", GAZE_LOW),
+            "gaze_high": custom_settings.get("gaze_high", GAZE_HIGH),
+            "head_limit": custom_settings.get("head_limit", HEAD_LIMIT),
+            "inattention_limit": custom_settings.get("inattention_limit", INATTENTION_LIMIT),
+            "reading_window": custom_settings.get("reading_window", READING_WINDOW),
+            "reading_min_amp": custom_settings.get("reading_min_amp", READING_MIN_AMP),
+            "reading_max_freq": custom_settings.get("reading_max_freq", READING_MAX_FREQ),
+            "reading_min_freq": custom_settings.get("reading_min_freq", READING_MIN_FREQ),
+            "expected_fps": expected_fps,
+        }
         
         # ✅ USE FRAME PROVIDED BY CLIENT (decoded from base64 by consumer)
         frame_bgr = face_data.get("frame_bgr")
@@ -346,6 +381,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         
         h, w = frame_bgr.shape[:2]
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        brightness_score = float(np.mean(gray))
+        low_light = brightness_score < custom_settings.get("low_light_threshold", LOW_LIGHT_THRESHOLD)
         gray = cv2.equalizeHist(gray) 
 
         # Require a real ML Kit face box from the same frame. Server-side
@@ -365,13 +402,19 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             or client_y + client_h > frame_height
         )
         if client_box_missing or client_box_is_full_frame or client_box_out_of_frame:
+            engagement_info = update_engagement(
+                0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
+            )
+            engagement_info["state"] = "idle_distracted"
+            engagement_info["video_attentive"] = False
+            engagement_info["reading_focus"] = False
             return {
                 "face_detected": False,
                 "concentration_level": "low",
                 "concentration_score": 0,
                 "message": "No valid client face box received",
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "analysis": asdict(AnalysisFlags()),
+                "analysis": build_analysis(AnalysisFlags(), low_light),
                 "face_position": {
                     "client_x": int(client_x),
                     "client_y": int(client_y),
@@ -380,9 +423,16 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     "frame_width": int(frame_width),
                     "frame_height": int(frame_height),
                 },
-                "recommendations": ["Ensure your face is visible before sending the frame"],
+                "engagement": engagement_info,
+                "inattention_start": engagement_info.get("new_inattention_start"),
+                "recommendations": [
+                    "Improve room lighting for better face detection"
+                    if low_light else
+                    "Ensure your face is visible before sending the frame"
+                ],
                 "metrics": {
                     "faces_count": 0,
+                    "brightness_score": round(brightness_score, 2),
                 },
             }
         
@@ -397,13 +447,19 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 
         
         if len(faces_haar) == 0:
+            engagement_info = update_engagement(
+                0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
+            )
+            engagement_info["state"] = "idle_distracted"
+            engagement_info["video_attentive"] = False
+            engagement_info["reading_focus"] = False
             return {
                 "face_detected": False,
                 "concentration_level": "low",
                 "concentration_score": 0,
                 "message": "No face detected in provided frame",
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "analysis": asdict(AnalysisFlags()),
+                "analysis": build_analysis(AnalysisFlags(), low_light),
                 "face_position": {
                     "client_x": int(client_x),
                     "client_y": int(client_y),
@@ -412,7 +468,17 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     "frame_width": int(frame_width),
                     "frame_height": int(frame_height),
                 },
-                "recommendations": ["Ensure your face is visible and well-lit in the frame"],
+                "engagement": engagement_info,
+                "inattention_start": engagement_info.get("new_inattention_start"),
+                "recommendations": [
+                    "Improve room lighting for better face detection"
+                    if low_light else
+                    "Ensure your face is visible and well-lit in the frame"
+                ],
+                "metrics": {
+                    "faces_count": 0,
+                    "brightness_score": round(brightness_score, 2),
+                },
             }
         
         # Use first detected face
@@ -463,13 +529,19 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         flags.face_present = faces_count > 0
 
         if faces_count == 0:
+            engagement_info = update_engagement(
+                0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
+            )
+            engagement_info["state"] = "idle_distracted"
+            engagement_info["video_attentive"] = False
+            engagement_info["reading_focus"] = False
             return {
                 "face_detected": False,
                 "concentration_level": "low",
                 "concentration_score": 0,
                 "message": "No clear face landmarks detected",
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "analysis": asdict(AnalysisFlags()),
+                "analysis": build_analysis(AnalysisFlags(), low_light),
                 "face_position": {
                     "server_x": int(x),
                     "server_y": int(y),
@@ -482,9 +554,16 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     "frame_width": int(frame_width),
                     "frame_height": int(frame_height),
                 },
-                "recommendations": ["Ensure your face is clearly visible and well-lit"],
+                "engagement": engagement_info,
+                "inattention_start": engagement_info.get("new_inattention_start"),
+                "recommendations": [
+                    "Improve room lighting for better face detection"
+                    if low_light else
+                    "Ensure your face is clearly visible and well-lit"
+                ],
                 "metrics": {
                     "faces_count": 0,
+                    "brightness_score": round(brightness_score, 2),
                 },
             }
         
@@ -521,18 +600,6 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             if (yawn_distance > YAWN_THRESH) or (blink_ratio > 5.0):
                 drowsy_state = 0.8
         
-        # Build settings dict
-        settings = {
-            "gaze_low": custom_settings.get("gaze_low", GAZE_LOW),
-            "gaze_high": custom_settings.get("gaze_high", GAZE_HIGH),
-            "head_limit": custom_settings.get("head_limit", HEAD_LIMIT),
-            "inattention_limit": custom_settings.get("inattention_limit", INATTENTION_LIMIT),
-            "reading_window": custom_settings.get("reading_window", READING_WINDOW),
-            "reading_min_amp": custom_settings.get("reading_min_amp", READING_MIN_AMP),
-            "reading_min_freq": custom_settings.get("reading_min_freq", READING_MIN_FREQ),
-            "reading_max_freq": custom_settings.get("reading_max_freq", READING_MAX_FREQ),
-        }
-        
         # Validate gaze and head pose
         flags.gaze_in_range = settings["gaze_low"] < gaze_ratio < settings["gaze_high"]
         flags.head_pose_ok = (
@@ -543,7 +610,15 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         
         # Calculate engagement
         engagement_info = update_engagement(
-            gaze_ratio, drowsy_state, pitch, yaw, faces_count, settings, gaze_history, inattention_start
+            gaze_ratio,
+            drowsy_state,
+            pitch,
+            yaw,
+            faces_count,
+            settings,
+            gaze_history,
+            inattention_start,
+            frame_time_seconds,
         )
         flags.reading_pattern = engagement_info.get("reading_focus", False)
         
@@ -603,6 +678,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             recommendations.append("Keep your head oriented towards the screen")
         if not flags.not_drowsy:
             recommendations.append("You appear drowsy; consider taking a short break")
+        if low_light:
+            recommendations.append("Improve room lighting for better face detection")
         if not recommendations:
             recommendations.append("Perfect! Maintain your current position")
         
@@ -625,7 +702,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "frame_width": int(frame_width),
                 "frame_height": int(frame_height),
             },
-            "analysis": asdict(flags),
+            "analysis": build_analysis(flags, low_light),
             "engagement": engagement_info,
             "inattention_start": engagement_info.get("new_inattention_start"),
             "recommendations": recommendations,
@@ -644,6 +721,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "yawn_distance": round(yawn_distance, 4),
                 "drowsy_state": drowsy_state,
                 "faces_count": faces_count,
+                "brightness_score": round(brightness_score, 2),
             },
         }
     
