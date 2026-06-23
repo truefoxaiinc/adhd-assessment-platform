@@ -428,7 +428,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "recommendations": [
                     "Improve room lighting for better face detection"
                     if low_light else
-                    "Ensure your face is visible before sending the frame"
+                    "Ensure the camera frame and ML Kit face box are from the same image"
                 ],
                 "metrics": {
                     "faces_count": 0,
@@ -473,7 +473,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "recommendations": [
                     "Improve room lighting for better face detection"
                     if low_light else
-                    "Ensure your face is visible and well-lit in the frame"
+                    "Ensure your face is centered and the frame orientation is correct"
                 ],
                 "metrics": {
                     "faces_count": 0,
@@ -559,7 +559,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "recommendations": [
                     "Improve room lighting for better face detection"
                     if low_light else
-                    "Ensure your face is clearly visible and well-lit"
+                    "Ensure your face is centered and the frame orientation matches the face box"
                 ],
                 "metrics": {
                     "faces_count": 0,
