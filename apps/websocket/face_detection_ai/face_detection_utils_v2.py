@@ -627,8 +627,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
         flags.not_drowsy = (drowsy_state == 0.2)
 
-        eyes_closed = blink_ratio > 5.0
-        yawning = yawn_distance > YAWN_THRESH
+        eyes_closed = bool(blink_ratio > 5.0)
+        yawning = bool(yawn_distance > YAWN_THRESH)
         if gaze_ratio <= settings["gaze_low"]:
             gaze_state = "RIGHT"
         elif gaze_ratio > settings["gaze_high"]:
@@ -686,6 +686,21 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             else:
                 engagement_info["state"] = "idle_distracted"
                 engagement_info["video_attentive"] = False
+        elif (
+            mode == "video"
+            and concentration_score >= 7
+            and flags.face_present
+            and flags.face_size_adequate
+            and flags.face_centered
+            and flags.face_distance_good
+            and flags.face_not_on_edge
+            and flags.head_pose_ok
+            and flags.not_drowsy
+            and not eyes_closed
+            and not yawning
+        ):
+            engagement_info["state"] = "watching_video"
+            engagement_info["video_attentive"] = True
         elif mode == "reading" and gaze_in_pdf_zone and pdf_is_visible:
             engagement_info["state"] = "reading_pdf"
             engagement_info["video_attentive"] = False
