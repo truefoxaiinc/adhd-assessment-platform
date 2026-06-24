@@ -90,9 +90,15 @@ class AnalysisFlags:
     face_present: bool = False
     reading_pattern: bool = False
 
-def build_analysis(flags: AnalysisFlags, low_light: bool = False) -> Dict[str, Any]:
+def build_analysis(
+    flags: AnalysisFlags,
+    low_light: bool = False,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     analysis = asdict(flags)
     analysis["low_light"] = bool(low_light)
+    if extra:
+        analysis.update(extra)
     return analysis
 
 # --------------------------
@@ -619,6 +625,20 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             and -settings["head_limit"] <= yaw <= settings["head_limit"]
         )
         flags.not_drowsy = (drowsy_state == 0.2)
+
+        eyes_closed = blink_ratio > 5.0
+        yawning = yawn_distance > YAWN_THRESH
+        if gaze_ratio <= settings["gaze_low"]:
+            gaze_state = "RIGHT"
+        elif gaze_ratio > settings["gaze_high"]:
+            gaze_state = "LEFT"
+        else:
+            gaze_state = "CENTER"
+        analysis_extra = {
+            "eyes_closed": eyes_closed,
+            "yawning": yawning,
+            "gaze_state": gaze_state,
+        }
         
         # Calculate engagement
         engagement_info = update_engagement(
@@ -714,7 +734,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "frame_width": int(frame_width),
                 "frame_height": int(frame_height),
             },
-            "analysis": build_analysis(flags, low_light),
+            "analysis": build_analysis(flags, low_light, analysis_extra),
             "engagement": engagement_info,
             "inattention_start": engagement_info.get("new_inattention_start"),
             "recommendations": recommendations,
@@ -734,6 +754,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "drowsy_state": drowsy_state,
                 "faces_count": faces_count,
                 "brightness_score": round(brightness_score, 2),
+                "eyes_closed": eyes_closed,
+                "yawning": yawning,
+                "gaze_state": gaze_state,
             },
         }
     
