@@ -213,6 +213,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'inattention_start': self.inattention_start,
                 'mode': mode,
                 'pdf_is_visible': pdf_is_visible,
+                'is_assessment': is_assessment,
                 'last_attention_state': self.last_attention_state,
             }
 

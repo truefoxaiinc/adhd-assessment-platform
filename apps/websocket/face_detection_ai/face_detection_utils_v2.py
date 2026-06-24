@@ -332,6 +332,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         custom_settings = face_data.get("custom_settings", {}) or {}
         mode = face_data.get("mode", "video")
         pdf_is_visible = bool(face_data.get("pdf_is_visible", False))
+        is_assessment = bool(face_data.get("is_assessment", False))
         last_attention_state = face_data.get("last_attention_state", "idle_distracted")
         expected_fps = float(face_data.get("expected_fps", EXPECTED_FPS) or EXPECTED_FPS)
         frame_time_seconds = face_data.get("frame_time_seconds")
@@ -634,11 +635,13 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             gaze_state = "LEFT"
         else:
             gaze_state = "CENTER"
-        analysis_extra = {
-            "eyes_closed": eyes_closed,
-            "yawning": yawning,
-            "gaze_state": gaze_state,
-        }
+        analysis_extra = None
+        if not is_assessment:
+            analysis_extra = {
+                "eyes_closed": eyes_closed,
+                "yawning": yawning,
+                "gaze_state": gaze_state,
+            }
         
         # Calculate engagement
         engagement_info = update_engagement(
@@ -714,6 +717,30 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             recommendations.append("Improve room lighting for better face detection")
         if not recommendations:
             recommendations.append("Perfect! Maintain your current position")
+
+        metrics = {
+            "face_area_ratio": round(face_area_ratio, 4),
+            "center_deviation_x": round(x_diff / float(frame_width), 4),
+            "center_deviation_y": round(y_diff / float(frame_height), 4),
+            "size_ratio": round(client_w / float(frame_width), 4),
+            "raw_concentration_score": raw_concentration_score,
+            "score_window_size": len(score_history),
+            "gaze_ratio": round(gaze_ratio, 4),
+            "pitch": round(pitch, 2),
+            "yaw": round(yaw, 2),
+            "roll": round(roll, 2),
+            "blink_ratio": round(blink_ratio, 4),
+            "yawn_distance": round(yawn_distance, 4),
+            "drowsy_state": drowsy_state,
+            "faces_count": faces_count,
+            "brightness_score": round(brightness_score, 2),
+        }
+        if not is_assessment:
+            metrics.update({
+                "eyes_closed": eyes_closed,
+                "yawning": yawning,
+                "gaze_state": gaze_state,
+            })
         
         # ✅ RETURN COMPLETE ANALYSIS
         return {
@@ -738,26 +765,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "engagement": engagement_info,
             "inattention_start": engagement_info.get("new_inattention_start"),
             "recommendations": recommendations,
-            "metrics": {
-                "face_area_ratio": round(face_area_ratio, 4),
-                "center_deviation_x": round(x_diff / float(frame_width), 4),
-                "center_deviation_y": round(y_diff / float(frame_height), 4),
-                "size_ratio": round(client_w / float(frame_width), 4),
-                "raw_concentration_score": raw_concentration_score,
-                "score_window_size": len(score_history),
-                "gaze_ratio": round(gaze_ratio, 4),
-                "pitch": round(pitch, 2),
-                "yaw": round(yaw, 2),
-                "roll": round(roll, 2),
-                "blink_ratio": round(blink_ratio, 4),
-                "yawn_distance": round(yawn_distance, 4),
-                "drowsy_state": drowsy_state,
-                "faces_count": faces_count,
-                "brightness_score": round(brightness_score, 2),
-                "eyes_closed": eyes_closed,
-                "yawning": yawning,
-                "gaze_state": gaze_state,
-            },
+            "metrics": metrics,
         }
     
     except Exception as e:
