@@ -1,10 +1,20 @@
 from apps.progresstracker.models import UserAssessmentDetails, ProgressTracker
-from datetime import datetime
+from datetime import datetime, time as datetime_time, timedelta
+from django.utils import timezone
 
 import logging
 logger = logging.getLogger(__name__)
 
 class ProgressTrackerActions:
+
+    @staticmethod
+    def _next_midnight_after(completed_at):
+        local_completed_at = timezone.localtime(completed_at)
+        next_day = local_completed_at.date() + timedelta(days=1)
+        return timezone.make_aware(
+            datetime.combine(next_day, datetime_time.min),
+            timezone.get_current_timezone(),
+        )
 
     @staticmethod
     def get_days_for_the_file(user_instance):
@@ -15,7 +25,14 @@ class ProgressTrackerActions:
             assessment_instance   = UserAssessmentDetails.objects.filter(user=user_instance).first()
             last_completed_day    = assessment_instance.last_completed if assessment_instance else 0
             if last_completed_day not in [0, None]:
-                return list(range(1, int(last_completed_day) + 1))
+                unlocked_until = int(last_completed_day)
+                if assessment_instance.last_completed_at:
+                    next_unlock_time = ProgressTrackerActions._next_midnight_after(
+                        assessment_instance.last_completed_at
+                    )
+                    if timezone.now() >= next_unlock_time:
+                        unlocked_until += 1
+                return list(range(1, unlocked_until + 1))
             return [1]
             
         except Exception as e:
@@ -53,15 +70,18 @@ class ProgressTrackerActions:
 
             assessment_instance   = UserAssessmentDetails.objects.filter(user=user_instance).first()
             if assessment_instance:
-                assessment_instance.last_completed = day_completed
+                if filetype == 'video':
+                    assessment_instance.last_completed = day_completed
+                    assessment_instance.last_completed_at = timezone.now()
                 assessment_instance.is_day_completed = is_day_completed
                 assessment_instance.save()
             else:
                 UserAssessmentDetails.objects.create(
                     user=user_instance,
-                    last_completed=day_completed,
+                    last_completed=day_completed if filetype == 'video' else None,
+                    last_completed_at=timezone.now() if filetype == 'video' else None,
                     is_day_completed=is_day_completed,
-                    started_on=datetime.now()
+                    started_on=timezone.now()
                 )
             return True
         except Exception as e:

@@ -16,6 +16,7 @@ class UserAssessmentDetails(models.Model):
     user              = models.ForeignKey(Users, on_delete=models.CASCADE)
     course_duration   = models.IntegerField(_('Course Duration Days'),blank = True, null = True)
     last_completed    = models.IntegerField(_('Last Completed Day'),blank = True, null = True)
+    last_completed_at = models.DateTimeField(_('Last Completed At'), blank=True, null=True)
     started_on        = models.DateTimeField(_('Course Started On'),auto_now_add=True, blank=True, null=True)
     is_day_completed  = models.BooleanField(_('Is Day Completed'), default=False)
 
