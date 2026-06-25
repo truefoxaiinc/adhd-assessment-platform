@@ -131,11 +131,14 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             if self.user_id and self.session_metrics:
                 await self._save_assessment_score()
 
+            session_summary = self._build_session_summary(self.session_metrics)
+
             await self.send(text_data=json.dumps({
                 'type': 'endcall_processed',
                 'session_id': self.session_id,
                 'user_id': self.user_id,
                 'metrics_count': len(self.session_metrics),
+                'session_summary': session_summary,
                 'filetype': filetype,
                 'day_completed': day_completed,
                 'order_number': order_number,
@@ -236,11 +239,27 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             # as zero; otherwise the final score can remain high because only
             # successful face frames are averaged.
             if self.user_id:
+                analysis = result.get('analysis', {}) or {}
+                metrics = result.get('metrics', {}) or {}
+                engagement = result.get('engagement', {}) or {}
                 self.session_metrics.append({
                     'concentration_score': result.get('concentration_score', 0),
-                    'gaze_ratio': result.get('metrics', {}).get('gaze_ratio', 0.0),
-                    'inattention_duration': result.get('engagement', {}).get('inattention_duration', 0.0),
-                    'drowsy_state': result.get('metrics', {}).get('drowsy_state', 0.8)
+                    'gaze_ratio': metrics.get('gaze_ratio', 0.0),
+                    'inattention_duration': engagement.get('inattention_duration', 0.0),
+                    'drowsy_state': metrics.get('drowsy_state', 0.8),
+                    'face_detected': result.get('face_detected', False),
+                    'video_attentive': engagement.get('video_attentive', False),
+                    'eyes_closed': analysis.get('eyes_closed', False),
+                    'yawning': analysis.get('yawning', False),
+                    'gaze_state': analysis.get('gaze_state') or metrics.get('gaze_state') or '',
+                    'head_pose_ok': analysis.get('head_pose_ok', False),
+                    'low_light': analysis.get('low_light', False),
+                    'brightness_score': metrics.get('brightness_score', 0.0),
+                    'pitch': metrics.get('pitch', 0.0),
+                    'yaw': metrics.get('yaw', 0.0),
+                    'roll': metrics.get('roll', 0.0),
+                    'blink_ratio': metrics.get('blink_ratio', 0.0),
+                    'yawn_distance': metrics.get('yawn_distance', 0.0),
                 })
 
             response_data = {
@@ -321,6 +340,43 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             await self.send_error(f'Guidelines retrieval error: {str(e)}')
 
+    def _build_session_summary(self, metrics):
+        total = len(metrics)
+        if total == 0:
+            return {}
+
+        def pct(key):
+            return round((sum(1 for m in metrics if m.get(key)) / total) * 100, 2)
+
+        avg_concentration = sum(m.get('concentration_score', 0) for m in metrics) / total
+        avg_gaze_ratio = sum(m.get('gaze_ratio', 0.0) for m in metrics) / total
+        max_inattention = max((m.get('inattention_duration', 0.0) for m in metrics), default=0.0)
+        side_gaze_frames = sum(1 for m in metrics if m.get('gaze_state') in ['LEFT', 'RIGHT'])
+        low_light_frames = sum(1 for m in metrics if m.get('low_light'))
+        eyes_closed_frames = sum(1 for m in metrics if m.get('eyes_closed'))
+        yawning_frames = sum(1 for m in metrics if m.get('yawning'))
+        drowsy_frames = sum(1 for m in metrics if m.get('drowsy_state', 0.2) != 0.2)
+
+        return {
+            'total_frames': total,
+            'avg_concentration_score': round(avg_concentration, 2),
+            'final_attention_score_percent': round((avg_concentration / 8.0) * 100, 2),
+            'avg_gaze_ratio': round(avg_gaze_ratio, 4),
+            'max_inattention_duration': round(max_inattention, 2),
+            'face_detection_rate': pct('face_detected'),
+            'attention_engagement_rate': pct('video_attentive'),
+            'head_stability_rate': pct('head_pose_ok'),
+            'eye_closed_rate': round((eyes_closed_frames / total) * 100, 2),
+            'yawning_rate': round((yawning_frames / total) * 100, 2),
+            'drowsy_rate': round((drowsy_frames / total) * 100, 2),
+            'side_gaze_rate': round((side_gaze_frames / total) * 100, 2),
+            'low_light_rate': round((low_light_frames / total) * 100, 2),
+            'eyes_closed_frames': eyes_closed_frames,
+            'yawning_frames': yawning_frames,
+            'side_gaze_frames': side_gaze_frames,
+            'low_light_frames': low_light_frames,
+        }
+
     async def handle_get_stats(self):
         try:
             stats = {
@@ -361,6 +417,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
     def _create_sessions_sync(self, user_id, session_id, metrics):
         """CHANGE 'apps.yourapp.models' to your actual app path"""
         from apps.progresstracker.models import FaceAttentionSession  # UPDATE THIS PATH
+        summary = self._build_session_summary(metrics)
+        attention_engagement_rate = summary.get('attention_engagement_rate', 0.0)
         for m in metrics:
             FaceAttentionSession.objects.create(
                 user_id=user_id,
@@ -368,7 +426,21 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 concentration_score=m['concentration_score'],
                 gaze_ratio_avg=m['gaze_ratio'],
                 inattention_duration=m['inattention_duration'],
-                drowsy_state=m['drowsy_state']
+                drowsy_state=m['drowsy_state'],
+                face_detected=m.get('face_detected', False),
+                video_attentive=m.get('video_attentive', False),
+                eyes_closed=m.get('eyes_closed', False),
+                yawning=m.get('yawning', False),
+                gaze_state=m.get('gaze_state') or '',
+                head_pose_ok=m.get('head_pose_ok', False),
+                low_light=m.get('low_light', False),
+                brightness_score=m.get('brightness_score', 0.0),
+                pitch=m.get('pitch', 0.0),
+                yaw=m.get('yaw', 0.0),
+                roll=m.get('roll', 0.0),
+                blink_ratio=m.get('blink_ratio', 0.0),
+                yawn_distance=m.get('yawn_distance', 0.0),
+                attention_engagement_rate=attention_engagement_rate,
             )
 
     @database_sync_to_async
