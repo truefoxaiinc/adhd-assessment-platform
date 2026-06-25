@@ -50,6 +50,7 @@ READING_MIN_AMP = 0.3
 READING_MIN_FREQ = 0.1
 READING_MAX_FREQ = 1.5
 YAWN_THRESH = 15.0
+BLINK_RATIO_THRESHOLD = 4.75
 
 # State variables are now passed via WebSocket consumer face_data
 
@@ -603,7 +604,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             pitch, yaw, roll = get_head_pose(shape_np)
             
             # Drowsiness detection
-            if (yawn_distance > YAWN_THRESH) or (blink_ratio > 5.0):
+            if (yawn_distance > YAWN_THRESH) or (blink_ratio > BLINK_RATIO_THRESHOLD):
                 drowsy_state = 0.8
         
         # Validate gaze and head pose
@@ -614,7 +615,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
         flags.not_drowsy = (drowsy_state == 0.2)
 
-        eyes_closed = bool(blink_ratio > 5.0)
+        eyes_closed = bool(blink_ratio > BLINK_RATIO_THRESHOLD)
         yawning = bool(yawn_distance > YAWN_THRESH)
         if gaze_ratio <= settings["gaze_low"]:
             gaze_state = "RIGHT"
