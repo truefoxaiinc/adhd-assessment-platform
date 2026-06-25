@@ -452,41 +452,28 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             flags=cv2.CASCADE_SCALE_IMAGE
         )
                 
-        
-        if len(faces_haar) == 0:
-            engagement_info = update_engagement(
-                0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
-            )
-            engagement_info["state"] = "idle_distracted"
-            engagement_info["video_attentive"] = False
-            engagement_info["reading_focus"] = False
-            return {
-                "face_detected": False,
-                "concentration_level": "low",
-                "concentration_score": 0,
-                "message": "No face detected in provided frame",
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "analysis": build_analysis(AnalysisFlags(), low_light),
-                "face_position": {
-                    "client_x": int(client_x),
-                    "client_y": int(client_y),
-                    "client_width": int(client_w),
-                    "client_height": int(client_h),
-                    "frame_width": int(frame_width),
-                    "frame_height": int(frame_height),
-                },
-                "engagement": engagement_info,
-                "inattention_start": engagement_info.get("new_inattention_start"),
-                "recommendations": [
-                    "Improve room lighting for better face detection"
-                    if low_light else
-                    "Ensure your face is centered and the frame orientation is correct"
-                ],
-                "metrics": {
-                    "faces_count": 0,
-                    "brightness_score": round(brightness_score, 2),
-                },
-            }
+        faces_haar = list(faces_haar)
+        client_face_center = (
+            client_x + (client_w / 2.0),
+            client_y + (client_h / 2.0),
+        )
+
+        if faces_haar:
+            # Mobile frames can contain video content plus the selfie preview.
+            # Prefer the server-detected face closest to the ML Kit face box.
+            faces_haar = [
+                min(
+                    faces_haar,
+                    key=lambda face: (
+                        (face[0] + face[2] / 2.0 - client_face_center[0]) ** 2
+                        + (face[1] + face[3] / 2.0 - client_face_center[1]) ** 2
+                    ),
+                )
+            ]
+        else:
+            # ML Kit has already supplied a valid same-frame face box. Use it
+            # as the server face candidate when Haar misses mobile frames.
+            faces_haar = [(int(client_x), int(client_y), int(client_w), int(client_h))]
         
         # Use first detected face
         x, y, fw, fh = faces_haar[0]
