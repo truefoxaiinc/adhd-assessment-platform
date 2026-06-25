@@ -214,6 +214,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'mode': mode,
                 'pdf_is_visible': pdf_is_visible,
                 'is_assessment': is_assessment,
+                'eye': data.get('eye', {}) or {},
                 'last_attention_state': self.last_attention_state,
             }
 

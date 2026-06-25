@@ -51,6 +51,7 @@ READING_MIN_FREQ = 0.1
 READING_MAX_FREQ = 1.5
 YAWN_THRESH = 15.0
 BLINK_RATIO_THRESHOLD = 4.75
+EYE_OPEN_PROBABILITY_THRESHOLD = 0.3
 
 # State variables are now passed via WebSocket consumer face_data
 
@@ -334,6 +335,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         mode = face_data.get("mode", "video")
         pdf_is_visible = bool(face_data.get("pdf_is_visible", False))
         is_assessment = bool(face_data.get("is_assessment", False))
+        eye_data = face_data.get("eye", {}) or {}
         last_attention_state = face_data.get("last_attention_state", "idle_distracted")
         expected_fps = float(face_data.get("expected_fps", EXPECTED_FPS) or EXPECTED_FPS)
         frame_time_seconds = face_data.get("frame_time_seconds")
@@ -603,9 +605,23 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             # Head pose estimation
             pitch, yaw, roll = get_head_pose(shape_np)
             
-            # Drowsiness detection
-            if (yawn_distance > YAWN_THRESH) or (blink_ratio > BLINK_RATIO_THRESHOLD):
-                drowsy_state = 0.8
+        left_eye_open_probability = eye_data.get("left_open_probability")
+        right_eye_open_probability = eye_data.get("right_open_probability")
+        mlkit_eyes_closed = False
+        if left_eye_open_probability is not None and right_eye_open_probability is not None:
+            left_eye_open_probability = float(left_eye_open_probability)
+            right_eye_open_probability = float(right_eye_open_probability)
+            mlkit_eyes_closed = (
+                left_eye_open_probability < EYE_OPEN_PROBABILITY_THRESHOLD
+                and right_eye_open_probability < EYE_OPEN_PROBABILITY_THRESHOLD
+            )
+
+        eyes_closed = bool(blink_ratio > BLINK_RATIO_THRESHOLD or mlkit_eyes_closed)
+        yawning = bool(yawn_distance > YAWN_THRESH)
+
+        # Drowsiness detection
+        if yawning or eyes_closed:
+            drowsy_state = 0.8
         
         # Validate gaze and head pose
         flags.gaze_in_range = settings["gaze_low"] < gaze_ratio < settings["gaze_high"]
@@ -615,8 +631,6 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
         flags.not_drowsy = (drowsy_state == 0.2)
 
-        eyes_closed = bool(blink_ratio > BLINK_RATIO_THRESHOLD)
-        yawning = bool(yawn_distance > YAWN_THRESH)
         if gaze_ratio <= settings["gaze_low"]:
             gaze_state = "RIGHT"
         elif gaze_ratio > settings["gaze_high"]:
@@ -737,6 +751,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "drowsy_state": drowsy_state,
             "faces_count": faces_count,
             "brightness_score": round(brightness_score, 2),
+            "left_eye_open_probability": left_eye_open_probability,
+            "right_eye_open_probability": right_eye_open_probability,
         }
         if not is_assessment:
             metrics.update({
