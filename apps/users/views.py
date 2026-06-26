@@ -31,10 +31,10 @@ from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework_simplejwt.tokens import RefreshToken
-import jwt
 import requests
 import logging
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 
 logger = logging.getLogger(__name__)
 
@@ -296,32 +296,72 @@ class PasswordChangeApiView(generics.GenericAPIView):
 class SocialLoginView(APIView):
     serializer_class = SocialLoginSerializer
 
+    def __init__(self, **kwargs):
+        self.response_format = ResponseInfo().response
+        super(SocialLoginView, self).__init__(**kwargs)
+
+    def _build_success_response(self, user, http_status=status.HTTP_200_OK):
+        data = GetLoginResponseSchema(user, context={'request': self.request}).data
+        self.response_format['status_code'] = http_status
+        self.response_format['status'] = True
+        self.response_format['message'] = _success
+        self.response_format['data'] = data
+        return Response(self.response_format, status=http_status)
+
+    def _get_unique_username(self, base_username):
+        username = base_username[:300]
+        if not Users.objects.filter(username=username).exists():
+            return username
+
+        suffix = random.randint(1000, 9999)
+        return f"{base_username[:294]}_{suffix}"[:300]
+
     @swagger_auto_schema(tags=["Social Login"],request_body=SocialLoginSerializer,operation_id='Social Login API',operation_description="This API allows the users to login using social media accounts",)
     def post(self, request):
-        provider = request.data.get('provider')
+        self.request = request
+        provider = (request.data.get('provider') or '').lower()
         token = request.data.get('id_token')
         
         if not provider or not token:
-            return Response({'error': 'Missing provider or token'}, status=400)
+            self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+            self.response_format['status'] = False
+            self.response_format['message'] = 'Missing provider or token'
+            return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             if provider == 'google':
-                payload = jwt.decode(token, options={"verify_signature": False})
-                if payload.get('iss') != 'https://accounts.google.com':
-                    return Response({'error': 'Invalid Google token'}, status=401)
+                audience = settings.GOOGLE_OAUTH_CLIENT_IDS[0] if settings.GOOGLE_OAUTH_CLIENT_IDS else None
+                payload = google_id_token.verify_oauth2_token(
+                    token,
+                    google_requests.Request(),
+                    audience,
+                )
+
+                if payload.get('iss') not in ['accounts.google.com', 'https://accounts.google.com']:
+                    self.response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
+                    self.response_format['status'] = False
+                    self.response_format['message'] = 'Invalid Google token issuer'
+                    return Response(self.response_format, status=status.HTTP_401_UNAUTHORIZED)
+
+                if settings.GOOGLE_OAUTH_CLIENT_IDS and payload.get('aud') not in settings.GOOGLE_OAUTH_CLIENT_IDS:
+                    self.response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
+                    self.response_format['status'] = False
+                    self.response_format['message'] = 'Google token audience mismatch'
+                    return Response(self.response_format, status=status.HTTP_401_UNAUTHORIZED)
                 
                 logger.info("Google payload: %s", payload)
                 
                 email = payload.get('email')
-                name_parts = payload.get('name', '').split()
-                username = f"google_{payload['sub']}"[:300]  # Unique username
-                dob = None  # Not in Google token
+                username = f"google_{payload['sub']}"[:300]
+                is_verified = bool(payload.get('email_verified', False))
                 
-                logger.info("name_parts: %s", name_parts)
                 logger.info("username: %s", username)
 
                 if not email:
-                    return Response({'error': 'No email in Google token'}, status=400)
+                    self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+                    self.response_format['status'] = False
+                    self.response_format['message'] = 'No email in Google token'
+                    return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
             
             elif provider == 'facebook':
                 fb_response = requests.get(
@@ -329,12 +369,15 @@ class SocialLoginView(APIView):
                     timeout=10
                 )
                 if fb_response.status_code != 200:
-                    return Response({'error': 'Invalid Facebook token'}, status=401)
+                    self.response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
+                    self.response_format['status'] = False
+                    self.response_format['message'] = 'Invalid Facebook token'
+                    return Response(self.response_format, status=status.HTTP_401_UNAUTHORIZED)
                 
                 fb_data = fb_response.json()
                 email = fb_data.get('email', f"fb_{fb_data['id']}@facebook.com")
-                name_parts = fb_data.get('name', '').split()
                 username = f"fb_{fb_data['id']}"[:300]
+                is_verified = bool(fb_data.get('email'))
                 # Parse DOB if available (format: MM/DD/YYYY or MM/YYYY)
                 dob_str = fb_data.get('birthday')
                 dob = None
@@ -346,44 +389,49 @@ class SocialLoginView(APIView):
                         pass
             
             else:
-                return Response({'error': 'Unsupported provider'}, status=400)
+                self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+                self.response_format['status'] = False
+                self.response_format['message'] = 'Unsupported provider'
+                return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
             
             # Create or update Users model
             user, created = Users.objects.get_or_create(
                 email=email,
                 defaults={
-                    'username': username,
-                    'dob': dob,
-                    # Other fields use defaults: is_staff=True, etc.
+                    'username': self._get_unique_username(username),
+                    'dob': dob if provider == 'facebook' else None,
+                    'is_verified': is_verified,
                 }
             )
             
             if not created:
-                # Update existing user
-                user.username = username
-                user.dob = dob
-                user.save()
+                update_fields = []
+                if not user.username:
+                    user.username = self._get_unique_username(username)
+                    update_fields.append('username')
+                if is_verified and not user.is_verified:
+                    user.is_verified = True
+                    update_fields.append('is_verified')
+                if provider == 'facebook' and dob and not user.dob:
+                    user.dob = dob
+                    update_fields.append('dob')
+                if update_fields:
+                    user.save(update_fields=update_fields)
             
-            # Generate JWT
-            refresh = RefreshToken.for_user(user)
+            return self._build_success_response(
+                user,
+                status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+            )
             
-            return Response({
-                'success': True,
-                'access': str(refresh.access_token),
-                'refresh': str(refresh),
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'username': user.username,
-                    'dob': user.dob.isoformat() if user.dob else None,
-                    'is_verified': user.is_verified,
-                    'is_staff': user.is_staff
-                }
-            })
-            
-        except jwt.DecodeError:
-            return Response({'error': 'Invalid token format'}, status=401)
+        except ValueError:
+            self.response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
+            self.response_format['status'] = False
+            self.response_format['message'] = 'Invalid token format'
+            return Response(self.response_format, status=status.HTTP_401_UNAUTHORIZED)
         except Exception as e:
-            return Response({'error': f'Login failed: {str(e)}'}, status=500)
+            self.response_format['status_code'] = status.HTTP_500_INTERNAL_SERVER_ERROR
+            self.response_format['status'] = False
+            self.response_format['message'] = f'Login failed: {str(e)}'
+            return Response(self.response_format, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         

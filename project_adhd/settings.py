@@ -33,6 +33,12 @@ if SENTRY_DSN:
 
 
 import environ
+
+GOOGLE_OAUTH_CLIENT_IDS = [
+    client_id.strip()
+    for client_id in config('GOOGLE_OAUTH_CLIENT_IDS', default='').split(',')
+    if client_id.strip()
+]
 env = environ.Env(
     DEBUG=(bool, False),
 )
