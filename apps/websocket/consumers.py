@@ -18,6 +18,38 @@ from apps.websocket.services.rate_limit_service import WebSocketRateLimiter
 logger = logging.getLogger(__name__)
 
 
+def extract_eye_data(payload):
+    eye_data = dict(payload.get('eye', {}) or {})
+    for key in (
+        'left_eye_open_probability',
+        'right_eye_open_probability',
+        'left_open_probability',
+        'right_open_probability',
+        'leftEyeOpenProbability',
+        'rightEyeOpenProbability',
+        'eye_aspect_ratio',
+        'eyeAspectRatio',
+        'ear',
+    ):
+        if key in payload and key not in eye_data:
+            eye_data[key] = payload.get(key)
+    face_data = payload.get('face', {}) or {}
+    for key in (
+        'left_eye_open_probability',
+        'right_eye_open_probability',
+        'left_open_probability',
+        'right_open_probability',
+        'leftEyeOpenProbability',
+        'rightEyeOpenProbability',
+        'eye_aspect_ratio',
+        'eyeAspectRatio',
+        'ear',
+    ):
+        if key in face_data and key not in eye_data:
+            eye_data[key] = face_data.get(key)
+    return eye_data
+
+
 class FaceDetectionConsumer(AsyncWebsocketConsumer):
     SAFE_ERROR_CODE = "FACE_VALIDATION_FAILED"
     SAFE_ERROR_MESSAGE = "Unable to process frame safely"
@@ -376,7 +408,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'mode': mode,
                 'pdf_is_visible': pdf_is_visible,
                 'is_assessment': is_assessment,
-                'eye': data.get('eye', {}) or {},
+                'eye': extract_eye_data(data),
                 'last_attention_state': self.last_attention_state,
             }
 

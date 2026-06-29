@@ -28,7 +28,7 @@ face_analysis_service = types.ModuleType("apps.websocket.services.face_analysis_
 face_analysis_service.analyze_face_attention = lambda face_analysis_data: {}
 sys.modules["apps.websocket.services.face_analysis_service"] = face_analysis_service
 
-from apps.websocket.consumers import FaceDetectionConsumer
+from apps.websocket.consumers import FaceDetectionConsumer, extract_eye_data
 
 
 VALID_PNG_BASE64 = (
@@ -112,6 +112,22 @@ def validate_face_payload():
 
 async def send_validate_face(communicator):
     await communicator.send_to(text_data=json.dumps(validate_face_payload()))
+
+
+def test_extract_eye_data_accepts_nested_top_level_and_face_aliases():
+    eye_data = extract_eye_data({
+        "eye": {"left_eye_open_probability": 0.9},
+        "rightEyeOpenProbability": 0.8,
+        "face": {
+            "leftEyeOpenProbability": 0.1,
+            "eye_aspect_ratio": 0.18,
+        },
+    })
+
+    assert eye_data["left_eye_open_probability"] == 0.9
+    assert eye_data["rightEyeOpenProbability"] == 0.8
+    assert eye_data["leftEyeOpenProbability"] == 0.1
+    assert eye_data["eye_aspect_ratio"] == 0.18
 
 
 def successful_analysis_result(
@@ -295,6 +311,31 @@ class TestFaceDetectionConsumerSecurity:
         assert response["type"] == "validation_result"
         assert response["result"]["face_detected"] is True
         analyze_mock.assert_called_once()
+        await communicator.disconnect()
+
+    async def test_top_level_mlkit_eye_probabilities_are_forwarded(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+        payload = validate_face_payload()
+        payload.update({
+            "left_eye_open_probability": 0.04,
+            "right_eye_open_probability": 0.07,
+        })
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                return_value=successful_analysis_result(),
+            ) as analyze_mock,
+        ):
+            await communicator.send_to(text_data=json.dumps(payload))
+            response = await communicator.receive_json_from(timeout=1)
+
+        assert response["type"] == "validation_result"
+        forwarded_eye_data = analyze_mock.call_args.args[0]["eye"]
+        assert forwarded_eye_data["left_eye_open_probability"] == 0.04
+        assert forwarded_eye_data["right_eye_open_probability"] == 0.07
         await communicator.disconnect()
 
     async def test_high_frequency_frames_only_process_bounded_count(self, user, monkeypatch):
@@ -1162,3 +1203,132 @@ class TestClientFaceBoxFallback:
         assert result["face_detected"] is False
         assert result["analysis"]["fallback_used"] is True
         assert "stale_timestamp" in result["analysis"]["client_box_validation_reasons"]
+
+
+class TestEyeClosedDetection:
+    def _configure_lightweight_analysis(self, monkeypatch, utils, blink_ratio=1.0):
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 0.0)
+        monkeypatch.setattr(utils, "get_blinking_ratio", lambda eye_points, landmarks: blink_ratio)
+        monkeypatch.setattr(utils, "get_gaze_ratio", lambda frame, gray, eye_points, landmarks: 1.0)
+        monkeypatch.setattr(utils, "get_head_pose", lambda shape_np: (0.0, 0.0, 0.0))
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(
+            utils,
+            "detector",
+            lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)],
+        )
+
+    def test_eyes_open_from_mlkit_probabilities(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+
+        eyes_closed, debug = utils.calculate_eye_state(
+            {
+                "left_eye_open_probability": 0.95,
+                "right_eye_open_probability": 0.9,
+            },
+            blink_ratio=6.0,
+        )
+
+        assert eyes_closed is False
+        assert debug["left_eye_open_probability"] == 0.95
+        assert debug["right_eye_open_probability"] == 0.9
+        assert debug["decision_reason"] == "mlkit_probability"
+
+    def test_both_eyes_closed_from_mlkit_probabilities(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+
+        eyes_closed, debug = utils.calculate_eye_state(
+            {
+                "left_eye_open_probability": 0.05,
+                "right_eye_open_probability": 0.08,
+            },
+            blink_ratio=0.0,
+        )
+
+        assert eyes_closed is True
+        assert debug["decision_reason"] == "mlkit_both_closed"
+
+    def test_one_eye_closed_does_not_mark_both_eyes_closed(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+
+        eyes_closed, debug = utils.calculate_eye_state(
+            {
+                "left_eye_open_probability": 0.05,
+                "right_eye_open_probability": 0.85,
+            },
+            blink_ratio=0.0,
+        )
+
+        assert eyes_closed is False
+        assert debug["decision_reason"] == "mlkit_probability"
+
+    def test_missing_probabilities_uses_open_blink_ratio_fallback(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+
+        eyes_closed, debug = utils.calculate_eye_state({}, blink_ratio=1.0)
+
+        assert eyes_closed is False
+        assert debug["left_eye_open_probability"] is None
+        assert debug["right_eye_open_probability"] is None
+        assert debug["decision_reason"] == "blink_ratio_fallback_open"
+
+    def test_eye_aspect_ratio_fallback_detects_closed_eyes(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+
+        eyes_closed, debug = utils.calculate_eye_state(
+            {"eye_aspect_ratio": 0.12},
+            blink_ratio=1.0,
+        )
+
+        assert eyes_closed is True
+        assert debug["eye_aspect_ratio"] == 0.12
+        assert debug["decision_reason"] == "ear_fallback_closed"
+
+    def test_noisy_probabilities_are_ignored_for_blink_ratio_fallback(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+
+        eyes_closed, debug = utils.calculate_eye_state(
+            {
+                "left_eye_open_probability": 1.4,
+                "right_eye_open_probability": -0.2,
+            },
+            blink_ratio=1.0,
+        )
+
+        assert eyes_closed is False
+        assert debug["left_eye_open_probability"] is None
+        assert debug["right_eye_open_probability"] is None
+        assert debug["decision_reason"] == "blink_ratio_fallback_open"
+
+    def test_blink_ratio_fallback_detects_closed_eyes(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+
+        eyes_closed, debug = utils.calculate_eye_state({}, blink_ratio=6.0)
+
+        assert eyes_closed is True
+        assert debug["decision_reason"] == "blink_ratio_fallback_closed"
+
+    def test_assessment_mode_keeps_mlkit_eyes_closed_in_analysis_and_metrics(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+
+        result = utils.analyze_face_attention_with_models(
+            base_face_analysis_data(
+                is_assessment=True,
+                eye={
+                    "left_eye_open_probability": 0.02,
+                    "right_eye_open_probability": 0.03,
+                },
+            )
+        )
+
+        assert result["face_detected"] is True
+        assert result["analysis"]["eyes_closed"] is True
+        assert result["metrics"]["eyes_closed"] is True
+        assert result["metrics"]["left_eye_open_probability"] == 0.02
+        assert result["metrics"]["right_eye_open_probability"] == 0.03
+        assert result["metrics"]["eye_decision_reason"] == "mlkit_both_closed"

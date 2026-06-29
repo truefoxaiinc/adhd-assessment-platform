@@ -11,6 +11,7 @@ from math import hypot
 from imutils import face_utils
 
 import logging
+from django.conf import settings as django_settings
 
 logger = logging.getLogger(__name__)
 SAFE_ANALYSIS_ERROR_MESSAGE = "Unable to process frame safely"
@@ -53,6 +54,7 @@ READING_MAX_FREQ = 1.5
 YAWN_THRESH = 15.0
 BLINK_RATIO_THRESHOLD = 4.75
 EYE_OPEN_PROBABILITY_THRESHOLD = 0.3
+EAR_CLOSED_THRESHOLD = 0.2
 CLIENT_FALLBACK_MIN_CONFIDENCE = 0.6
 CLIENT_FALLBACK_CONFIDENCE = 0.55
 SERVER_FACE_CONFIDENCE = 0.9
@@ -110,6 +112,89 @@ def build_analysis(
     if extra:
         analysis.update(extra)
     return analysis
+
+def _safe_probability(value):
+    try:
+        if value is None:
+            return None
+        probability = float(value)
+    except (TypeError, ValueError):
+        return None
+    if probability < 0.0 or probability > 1.0:
+        return None
+    return probability
+
+def _first_present(mapping, *keys):
+    for key in keys:
+        if key in mapping:
+            return mapping.get(key)
+    return None
+
+def calculate_eye_state(eye_data, blink_ratio=0.0, eye_aspect_ratio=None):
+    eye_data = eye_data or {}
+    left_eye_open_probability = _safe_probability(
+        _first_present(
+            eye_data,
+            "left_eye_open_probability",
+            "left_open_probability",
+            "leftEyeOpenProbability",
+        )
+    )
+    right_eye_open_probability = _safe_probability(
+        _first_present(
+            eye_data,
+            "right_eye_open_probability",
+            "right_open_probability",
+            "rightEyeOpenProbability",
+        )
+    )
+
+    try:
+        blink_ratio = float(blink_ratio or 0.0)
+    except (TypeError, ValueError):
+        blink_ratio = 0.0
+
+    if eye_aspect_ratio is None:
+        eye_aspect_ratio = _first_present(
+            eye_data,
+            "eye_aspect_ratio",
+            "ear",
+            "eyeAspectRatio",
+        )
+    try:
+        eye_aspect_ratio = float(eye_aspect_ratio) if eye_aspect_ratio is not None else None
+    except (TypeError, ValueError):
+        eye_aspect_ratio = None
+
+    mlkit_available = (
+        left_eye_open_probability is not None
+        and right_eye_open_probability is not None
+    )
+    if mlkit_available:
+        eyes_closed = (
+            left_eye_open_probability < EYE_OPEN_PROBABILITY_THRESHOLD
+            and right_eye_open_probability < EYE_OPEN_PROBABILITY_THRESHOLD
+        )
+        reason = "mlkit_both_closed" if eyes_closed else "mlkit_probability"
+    elif eye_aspect_ratio is not None:
+        eyes_closed = eye_aspect_ratio < EAR_CLOSED_THRESHOLD
+        reason = "ear_fallback_closed" if eyes_closed else "ear_fallback_open"
+    else:
+        eyes_closed = blink_ratio > BLINK_RATIO_THRESHOLD
+        reason = "blink_ratio_fallback_closed" if eyes_closed else "blink_ratio_fallback_open"
+
+    debug_info = {
+        "left_eye_open_probability": left_eye_open_probability,
+        "right_eye_open_probability": right_eye_open_probability,
+        "blink_ratio": blink_ratio,
+        "eye_aspect_ratio": eye_aspect_ratio,
+        "eyes_closed": bool(eyes_closed),
+        "decision_reason": reason,
+    }
+    if getattr(django_settings, "DEBUG", False):
+        logger.debug("Eye state decision", extra={"eye_state": debug_info})
+
+    return bool(eyes_closed), debug_info
 
 def build_ui_feedback(
     *,
@@ -1083,18 +1168,14 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             # Head pose estimation
             pitch, yaw, roll = get_head_pose(shape_np)
             
-        left_eye_open_probability = eye_data.get("left_open_probability")
-        right_eye_open_probability = eye_data.get("right_open_probability")
-        mlkit_eyes_closed = False
-        if left_eye_open_probability is not None and right_eye_open_probability is not None:
-            left_eye_open_probability = float(left_eye_open_probability)
-            right_eye_open_probability = float(right_eye_open_probability)
-            mlkit_eyes_closed = (
-                left_eye_open_probability < EYE_OPEN_PROBABILITY_THRESHOLD
-                and right_eye_open_probability < EYE_OPEN_PROBABILITY_THRESHOLD
-            )
-
-        eyes_closed = bool(blink_ratio > BLINK_RATIO_THRESHOLD or mlkit_eyes_closed)
+        eyes_closed, eye_state_debug = calculate_eye_state(
+            eye_data,
+            blink_ratio=blink_ratio,
+        )
+        left_eye_open_probability = eye_state_debug["left_eye_open_probability"]
+        right_eye_open_probability = eye_state_debug["right_eye_open_probability"]
+        eye_aspect_ratio = eye_state_debug["eye_aspect_ratio"]
+        eye_decision_reason = eye_state_debug["decision_reason"]
         yawning = bool(yawn_distance > YAWN_THRESH)
 
         # Drowsiness detection
@@ -1115,13 +1196,11 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             gaze_state = "LEFT"
         else:
             gaze_state = "CENTER"
-        analysis_extra = None
-        if not is_assessment:
-            analysis_extra = {
-                "eyes_closed": eyes_closed,
-                "yawning": yawning,
-                "gaze_state": gaze_state,
-            }
+        analysis_extra = {
+            "eyes_closed": eyes_closed,
+            "yawning": yawning,
+            "gaze_state": gaze_state,
+        }
         fallback_analysis = {
             "fallback_used": bool(fallback_used),
             "confidence": (
@@ -1137,10 +1216,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 [],
             ),
         }
-        if analysis_extra is None:
-            analysis_extra = fallback_analysis
-        else:
-            analysis_extra.update(fallback_analysis)
+        analysis_extra.update(fallback_analysis)
         
         # Calculate engagement
         engagement_info = update_engagement(
@@ -1256,15 +1332,16 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "brightness_score": round(brightness_score, 2),
             "left_eye_open_probability": left_eye_open_probability,
             "right_eye_open_probability": right_eye_open_probability,
+            "eye_aspect_ratio": eye_aspect_ratio,
+            "eye_decision_reason": eye_decision_reason,
             "fallback_used": bool(fallback_used),
             "confidence": fallback_analysis["confidence"],
         }
-        if not is_assessment:
-            metrics.update({
-                "eyes_closed": eyes_closed,
-                "yawning": yawning,
-                "gaze_state": gaze_state,
-            })
+        metrics.update({
+            "eyes_closed": eyes_closed,
+            "yawning": yawning,
+            "gaze_state": gaze_state,
+        })
 
         analysis = build_analysis(flags, low_light, analysis_extra)
         ui_feedback = build_ui_feedback(
