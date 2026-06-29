@@ -24,6 +24,16 @@ class FaceAttentionSession(models.Model):
     blink_ratio           = models.FloatField(default=0.0)
     yawn_distance         = models.FloatField(default=0.0)
     attention_engagement_rate = models.FloatField(default=0.0)
+    total_processed_frames = models.IntegerField(default=0)
+    sampled_frames = models.IntegerField(default=0)
+    average_confidence = models.FloatField(default=0.0)
+    average_concentration_score = models.FloatField(default=0.0)
+    bad_frame_count = models.IntegerField(default=0)
+    blurry_frame_count = models.IntegerField(default=0)
+    low_light_frame_count = models.IntegerField(default=0)
+    eyes_closed_count = models.IntegerField(default=0)
+    gaze_warning_count = models.IntegerField(default=0)
+    session_duration_seconds = models.FloatField(default=0.0)
     created_at            = models.DateTimeField(auto_now_add=True)
 
 class UserAssessmentDetails(models.Model):

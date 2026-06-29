@@ -3,6 +3,7 @@ import collections
 import importlib
 import json
 import sys
+import time
 import types
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -113,10 +114,22 @@ async def send_validate_face(communicator):
     await communicator.send_to(text_data=json.dumps(validate_face_payload()))
 
 
-def successful_analysis_result(analysis=None, concentration_level="high", concentration_score=8):
+def successful_analysis_result(
+    analysis=None,
+    concentration_level="high",
+    concentration_score=8,
+    metrics=None,
+    engagement=None,
+):
     result_analysis = {"head_pose_ok": True, "gaze_in_range": True}
     if analysis:
         result_analysis.update(analysis)
+    result_metrics = {"gaze_ratio": 1.0, "drowsy_state": 0.2}
+    if metrics:
+        result_metrics.update(metrics)
+    result_engagement = {"video_attentive": True, "inattention_duration": 0.0}
+    if engagement:
+        result_engagement.update(engagement)
     return {
         "face_detected": True,
         "concentration_level": concentration_level,
@@ -126,8 +139,8 @@ def successful_analysis_result(analysis=None, concentration_level="high", concen
         "analysis": result_analysis,
         "face_position": {},
         "recommendations": [],
-        "metrics": {"gaze_ratio": 1.0, "drowsy_state": 0.2},
-        "engagement": {"video_attentive": True, "inattention_duration": 0.0},
+        "metrics": result_metrics,
+        "engagement": result_engagement,
     }
 
 
@@ -432,6 +445,132 @@ class TestFaceDetectionConsumerSecurity:
         assert responses[2]["result"]["temporal"]["warning_triggered"] is True
         assert responses[2]["result"]["concentration_level"] == "low"
         assert responses[2]["result"]["feedback"]["action_required"] is True
+        await communicator.disconnect()
+
+    async def test_extreme_gaze_ratio_does_not_trigger_temporal_bad_frame(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                return_value=successful_analysis_result(
+                    analysis={"gaze_in_range": False, "head_pose_valid": True},
+                    metrics={"gaze_ratio": 27.0},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        result = response["result"]
+        assert result["analysis"]["gaze_reliable"] is False
+        assert result["analysis"]["gaze_confidence"] == 0.3
+        assert result["temporal"]["bad_frame_count"] == 0
+        assert result["temporal"]["warning_triggered"] is False
+        await communicator.disconnect()
+
+    async def test_unreliable_gaze_only_does_not_force_low_attention(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                return_value=successful_analysis_result(
+                    analysis={
+                        "gaze_in_range": False,
+                        "eyes_closed": False,
+                        "head_pose_valid": True,
+                    },
+                    metrics={"gaze_ratio": 27.0},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        result = response["result"]
+        assert result["face_detected"] is True
+        assert result["analysis"]["eyes_open"] is True
+        assert result["analysis"]["head_pose_valid"] is True
+        assert result["quality"]["blurry"] is False
+        assert result["quality"]["low_light"] is False
+        assert result["analysis"]["gaze_reliable"] is False
+        assert result["concentration_level"] == "medium"
+        assert result["concentration_score"] >= 4
+        await communicator.disconnect()
+
+    async def test_repeated_reliable_left_gaze_triggers_warning(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(
+                    analysis={"gaze_in_range": False, "gaze_state": "LEFT"},
+                    metrics={"gaze_ratio": 0.5, "gaze_state": "LEFT"},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            responses = []
+            for _ in range(3):
+                await send_validate_face(communicator)
+                responses.append(await communicator.receive_json_from(timeout=1))
+
+        final_result = responses[-1]["result"]
+        assert final_result["analysis"]["gaze_reliable"] is True
+        assert final_result["analysis"]["gaze_confidence"] == 0.8
+        assert final_result["temporal"]["bad_frame_count"] == 3
+        assert final_result["temporal"]["warning_triggered"] is True
+        assert final_result["concentration_level"] == "low"
+        await communicator.disconnect()
+
+    async def test_engagement_state_and_video_attentive_are_consistent(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                return_value=successful_analysis_result(
+                    engagement={"state": "watching_video", "video_attentive": False},
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        engagement = response["result"]["engagement"]
+        assert engagement["state"] == "watching_video"
+        assert engagement["video_attentive"] is True
         await communicator.disconnect()
 
     async def test_one_blink_does_not_alert(self, user, monkeypatch):
@@ -769,6 +908,176 @@ class TestFaceDetectionConsumerSecurity:
         assert stats_response["stats"]["session_info"]["stored_metric_samples"] == 2
         assert stats_response["stats"]["session_info"]["metrics_collected"] == 4
         await communicator.disconnect()
+
+
+class FakeAtomic:
+    def __init__(self, calls):
+        self.calls = calls
+
+    def __enter__(self):
+        self.calls.append("enter")
+
+    def __exit__(self, exc_type, exc, tb):
+        self.calls.append("exit")
+
+
+class FakeFaceAttentionManager:
+    def __init__(self):
+        self.rows = {}
+        self.update_or_create_calls = []
+        self.create_calls = []
+
+    def update_or_create(self, user_id, session_id, defaults):
+        key = (user_id, session_id)
+        self.update_or_create_calls.append(
+            {"user_id": user_id, "session_id": session_id, "defaults": defaults}
+        )
+        created = key not in self.rows
+        self.rows[key] = {"user_id": user_id, "session_id": session_id, **defaults}
+        return SimpleNamespace(**self.rows[key]), created
+
+    def create(self, **kwargs):
+        self.create_calls.append(kwargs)
+        raise AssertionError("per-frame create should not be used")
+
+
+def install_fake_face_attention_model(monkeypatch):
+    manager = FakeFaceAttentionManager()
+    fake_model = SimpleNamespace(objects=manager)
+    fake_models_module = types.ModuleType("apps.progresstracker.models")
+    fake_models_module.FaceAttentionSession = fake_model
+    monkeypatch.setitem(sys.modules, "apps.progresstracker.models", fake_models_module)
+    return manager
+
+
+def aggregate_metric(**overrides):
+    metric = {
+        "concentration_score": 6,
+        "gaze_ratio": 1.0,
+        "inattention_duration": 0.0,
+        "drowsy_state": 0.2,
+        "face_detected": True,
+        "video_attentive": True,
+        "eyes_closed": False,
+        "yawning": False,
+        "gaze_state": "CENTER",
+        "head_pose_ok": True,
+        "low_light": False,
+        "brightness_score": 90.0,
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": 0.0,
+        "blink_ratio": 1.0,
+        "yawn_distance": 0.0,
+        "confidence": 0.8,
+        "blurry": False,
+        "bad_frame": False,
+    }
+    metric.update(overrides)
+    return metric
+
+
+class TestAggregateSessionMetrics:
+    def setup_consumer(self):
+        consumer = FaceDetectionConsumer()
+        consumer.user_id = 1
+        consumer.session_id = "session-1"
+        consumer.session_started_at = time.time() - 12
+        return consumer
+
+    def persist_sync(self, consumer, user_id=1, session_id="session-1"):
+        return FaceDetectionConsumer._create_sessions_sync.__wrapped__(
+            consumer,
+            user_id,
+            session_id,
+            list(consumer.session_metrics),
+        )
+
+    def test_session_end_creates_one_aggregate_record(self, monkeypatch):
+        manager = install_fake_face_attention_model(monkeypatch)
+        atomic_calls = []
+        monkeypatch.setattr(
+            "django.db.transaction.atomic",
+            lambda: FakeAtomic(atomic_calls),
+        )
+        consumer = self.setup_consumer()
+        consumer._record_session_metric(aggregate_metric())
+        consumer._record_session_metric(aggregate_metric(concentration_score=4, confidence=0.6))
+
+        self.persist_sync(consumer)
+
+        assert len(manager.rows) == 1
+        assert len(manager.update_or_create_calls) == 1
+        assert manager.create_calls == []
+        assert atomic_calls == ["enter", "exit"]
+        row = next(iter(manager.rows.values()))
+        assert row["total_processed_frames"] == 2
+        assert row["sampled_frames"] == 2
+
+    def test_repeated_endcall_does_not_duplicate_rows(self, monkeypatch):
+        manager = install_fake_face_attention_model(monkeypatch)
+        monkeypatch.setattr("django.db.transaction.atomic", lambda: FakeAtomic([]))
+        consumer = self.setup_consumer()
+        consumer._record_session_metric(aggregate_metric(concentration_score=8, confidence=0.9))
+
+        self.persist_sync(consumer)
+        consumer._record_session_metric(aggregate_metric(concentration_score=4, confidence=0.5))
+        self.persist_sync(consumer)
+
+        assert len(manager.rows) == 1
+        assert len(manager.update_or_create_calls) == 2
+        row = manager.rows[(1, "session-1")]
+        assert row["total_processed_frames"] == 2
+        assert row["average_concentration_score"] == 6.0
+
+    def test_raw_metrics_list_remains_bounded(self):
+        consumer = self.setup_consumer()
+        consumer.session_metrics = collections.deque(maxlen=2)
+        for score in [1, 2, 3, 4]:
+            consumer._record_session_metric(aggregate_metric(concentration_score=score))
+
+        assert len(consumer.session_metrics) == 2
+        assert consumer.session_metric_totals["total_frames"] == 4
+
+    def test_aggregate_values_are_calculated_correctly(self):
+        consumer = self.setup_consumer()
+        consumer._record_session_metric(
+            aggregate_metric(
+                concentration_score=8,
+                confidence=0.9,
+                low_light=True,
+                blurry=True,
+                bad_frame=True,
+                eyes_closed=True,
+                gaze_state="LEFT",
+            )
+        )
+        consumer._record_session_metric(aggregate_metric(concentration_score=4, confidence=0.5))
+
+        aggregate = consumer._build_session_aggregate()
+
+        assert aggregate["total_processed_frames"] == 2
+        assert aggregate["sampled_frames"] == 2
+        assert aggregate["average_confidence"] == 0.7
+        assert aggregate["average_concentration_score"] == 6.0
+        assert aggregate["bad_frame_count"] == 1
+        assert aggregate["blurry_frame_count"] == 1
+        assert aggregate["low_light_frame_count"] == 1
+        assert aggregate["eyes_closed_count"] == 1
+        assert aggregate["gaze_warning_count"] == 1
+        assert aggregate["session_duration_seconds"] >= 0
+
+    def test_db_write_count_is_reduced(self, monkeypatch):
+        manager = install_fake_face_attention_model(monkeypatch)
+        monkeypatch.setattr("django.db.transaction.atomic", lambda: FakeAtomic([]))
+        consumer = self.setup_consumer()
+        for _ in range(5):
+            consumer._record_session_metric(aggregate_metric())
+
+        self.persist_sync(consumer)
+
+        assert len(manager.update_or_create_calls) == 1
+        assert manager.create_calls == []
 
 
 class TestClientFaceBoxFallback:

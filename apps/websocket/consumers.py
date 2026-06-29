@@ -35,6 +35,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
     BAD_QUALITY_WARNING_FRAME_THRESHOLD = 3
     TEMPORAL_WINDOW_SIZE = 5
     TEMPORAL_BAD_FRAME_THRESHOLD = 3
+    GAZE_RATIO_MIN_RELIABLE = 0.2
+    GAZE_RATIO_MAX_RELIABLE = 8.0
     RATE_LIMIT_MESSAGES = 30
     RATE_LIMIT_WINDOW_SECONDS = 10
     MAX_SESSION_METRIC_SAMPLES = 300
@@ -56,6 +58,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             'batch_validation': False
         }
         self.session_id = None
+        self.session_started_at = None
         self.session_metrics = collections.deque(maxlen=self.MAX_SESSION_METRIC_SAMPLES)
         self.session_metric_totals = self._new_metric_totals()
         self.user_id = None
@@ -85,6 +88,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.user_id = getattr(scope_user, 'id', None)
         
         self.session_id = str(uuid.uuid4())[:8]
+        self.session_started_at = time.time()
         self.session_metrics = collections.deque(maxlen=self.MAX_SESSION_METRIC_SAMPLES)
         self.session_metric_totals = self._new_metric_totals()
         self.gaze_history.clear()
@@ -417,6 +421,9 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'roll': metrics.get('roll', 0.0),
                     'blink_ratio': metrics.get('blink_ratio', 0.0),
                     'yawn_distance': metrics.get('yawn_distance', 0.0),
+                    'confidence': analysis.get('confidence', metrics.get('confidence', 0.0)),
+                    'blurry': result.get('quality', {}).get('blurry', False),
+                    'bad_frame': result.get('temporal', {}).get('warning_triggered', False),
                 })
 
             response_data = {
@@ -563,8 +570,21 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         analysis = result.setdefault('analysis', {})
         quality = result.setdefault('quality', {})
         engagement = result.setdefault('engagement', {})
+        metrics = result.setdefault('metrics', {})
 
         confidence = float(analysis.get('confidence', 1.0))
+        gaze_ratio = metrics.get('gaze_ratio')
+        try:
+            gaze_ratio = float(gaze_ratio)
+        except (TypeError, ValueError):
+            gaze_ratio = None
+        gaze_reliable = (
+            gaze_ratio is not None
+            and self.GAZE_RATIO_MIN_RELIABLE <= gaze_ratio <= self.GAZE_RATIO_MAX_RELIABLE
+        )
+        analysis['gaze_reliable'] = gaze_reliable
+        analysis['gaze_confidence'] = 0.8 if gaze_reliable else 0.3
+
         eyes_open = not bool(analysis.get('eyes_closed', False))
         head_pose_valid = bool(
             analysis.get(
@@ -576,15 +596,17 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             'face_detected': bool(result.get('face_detected', False)),
             'eyes_open': eyes_open,
             'gaze_in_range': bool(analysis.get('gaze_in_range', True)),
+            'gaze_reliable': gaze_reliable,
             'head_pose_valid': head_pose_valid,
             'blurry': bool(quality.get('blurry', False)),
             'low_light': bool(quality.get('low_light', False)),
             'confidence': confidence,
         }
+        gaze_is_bad = frame_state['gaze_reliable'] and not frame_state['gaze_in_range']
         frame_state['bad'] = (
             not frame_state['face_detected']
             or not frame_state['eyes_open']
-            or not frame_state['gaze_in_range']
+            or gaze_is_bad
             or not frame_state['head_pose_valid']
             or frame_state['blurry']
             or frame_state['low_light']
@@ -615,6 +637,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             result['message'] = 'Repeated poor attention signals'
             engagement['video_attentive'] = False
             engagement['trigger_feedback'] = True
+            self._normalize_engagement_state(engagement)
             return
 
         engagement['trigger_feedback'] = False
@@ -622,13 +645,34 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             result['concentration_score'] = max(result.get('concentration_score', 0), 4)
             result['concentration_level'] = 'medium'
             result['message'] = 'Transient frame variation'
+        elif (
+            not frame_state['bad']
+            and not frame_state['gaze_reliable']
+            and not frame_state['gaze_in_range']
+            and result.get('concentration_level') == 'low'
+        ):
+            result['concentration_score'] = max(result.get('concentration_score', 0), 4)
+            result['concentration_level'] = 'medium'
+            result['message'] = 'Unreliable gaze signal'
+
+        self._normalize_engagement_state(engagement)
+
+    def _normalize_engagement_state(self, engagement):
+        if engagement.get('state') == 'watching_video':
+            engagement['video_attentive'] = True
+        elif engagement.get('video_attentive') is False and engagement.get('state') == 'watching_video':
+            engagement['state'] = 'idle_distracted'
 
     def _new_metric_totals(self):
         return {
             'total_frames': 0,
+            'sampled_frames': 0,
             'concentration_score_sum': 0.0,
+            'confidence_sum': 0.0,
+            'confidence_count': 0,
             'gaze_ratio_sum': 0.0,
             'max_inattention_duration': 0.0,
+            'bad_frame_count': 0,
             'face_detected_count': 0,
             'video_attentive_count': 0,
             'head_pose_ok_count': 0,
@@ -636,6 +680,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             'yawning_count': 0,
             'drowsy_count': 0,
             'side_gaze_count': 0,
+            'gaze_warning_count': 0,
+            'blurry_count': 0,
             'low_light_count': 0,
         }
 
@@ -643,7 +689,12 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.session_metrics.append(metric)
         totals = self.session_metric_totals
         totals['total_frames'] += 1
+        totals['sampled_frames'] += 1
         totals['concentration_score_sum'] += metric.get('concentration_score', 0)
+        confidence = metric.get('confidence')
+        if confidence is not None:
+            totals['confidence_sum'] += float(confidence or 0.0)
+            totals['confidence_count'] += 1
         totals['gaze_ratio_sum'] += metric.get('gaze_ratio', 0.0)
         totals['max_inattention_duration'] = max(
             totals['max_inattention_duration'],
@@ -653,9 +704,12 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         totals['video_attentive_count'] += int(bool(metric.get('video_attentive')))
         totals['head_pose_ok_count'] += int(bool(metric.get('head_pose_ok')))
         totals['eyes_closed_count'] += int(bool(metric.get('eyes_closed')))
+        totals['bad_frame_count'] += int(bool(metric.get('bad_frame')))
         totals['yawning_count'] += int(bool(metric.get('yawning')))
         totals['drowsy_count'] += int(metric.get('drowsy_state', 0.2) != 0.2)
         totals['side_gaze_count'] += int(metric.get('gaze_state') in ['LEFT', 'RIGHT'])
+        totals['gaze_warning_count'] += int(metric.get('gaze_state') in ['LEFT', 'RIGHT'])
+        totals['blurry_count'] += int(bool(metric.get('blurry')))
         totals['low_light_count'] += int(bool(metric.get('low_light')))
 
     async def handle_update_settings(self, data):
@@ -836,33 +890,69 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
     # 🔥 NO TOP-LEVEL MODEL IMPORTS - LAZY LOADING ONLY
     @database_sync_to_async
     def _create_sessions_sync(self, user_id, session_id, metrics):
-        """CHANGE 'apps.yourapp.models' to your actual app path"""
+        """Persist one aggregate attention row per session."""
+        from django.db import transaction
         from apps.progresstracker.models import FaceAttentionSession  # UPDATE THIS PATH
         summary = self._build_session_summary(metrics)
         attention_engagement_rate = summary.get('attention_engagement_rate', 0.0)
-        for m in metrics:
-            FaceAttentionSession.objects.create(
+        aggregate = self._build_session_aggregate()
+        latest_metric = metrics[-1] if metrics else {}
+        defaults = {
+            'concentration_score': aggregate['average_concentration_score'],
+            'gaze_ratio_avg': summary.get('avg_gaze_ratio', 0.0),
+            'inattention_duration': summary.get('max_inattention_duration', 0.0),
+            'drowsy_state': latest_metric.get('drowsy_state', 0.2),
+            'face_detected': summary.get('face_detection_rate', 0.0) > 0.0,
+            'video_attentive': summary.get('attention_engagement_rate', 0.0) > 0.0,
+            'eyes_closed': aggregate['eyes_closed_count'] > 0,
+            'yawning': summary.get('yawning_frames', 0) > 0,
+            'gaze_state': latest_metric.get('gaze_state') or '',
+            'head_pose_ok': summary.get('head_stability_rate', 0.0) > 0.0,
+            'low_light': aggregate['low_light_frame_count'] > 0,
+            'brightness_score': latest_metric.get('brightness_score', 0.0),
+            'pitch': latest_metric.get('pitch', 0.0),
+            'yaw': latest_metric.get('yaw', 0.0),
+            'roll': latest_metric.get('roll', 0.0),
+            'blink_ratio': latest_metric.get('blink_ratio', 0.0),
+            'yawn_distance': latest_metric.get('yawn_distance', 0.0),
+            'attention_engagement_rate': attention_engagement_rate,
+            **aggregate,
+        }
+
+        with transaction.atomic():
+            FaceAttentionSession.objects.update_or_create(
                 user_id=user_id,
                 session_id=session_id,
-                concentration_score=m['concentration_score'],
-                gaze_ratio_avg=m['gaze_ratio'],
-                inattention_duration=m['inattention_duration'],
-                drowsy_state=m['drowsy_state'],
-                face_detected=m.get('face_detected', False),
-                video_attentive=m.get('video_attentive', False),
-                eyes_closed=m.get('eyes_closed', False),
-                yawning=m.get('yawning', False),
-                gaze_state=m.get('gaze_state') or '',
-                head_pose_ok=m.get('head_pose_ok', False),
-                low_light=m.get('low_light', False),
-                brightness_score=m.get('brightness_score', 0.0),
-                pitch=m.get('pitch', 0.0),
-                yaw=m.get('yaw', 0.0),
-                roll=m.get('roll', 0.0),
-                blink_ratio=m.get('blink_ratio', 0.0),
-                yawn_distance=m.get('yawn_distance', 0.0),
-                attention_engagement_rate=attention_engagement_rate,
+                defaults=defaults,
             )
+
+    def _build_session_aggregate(self):
+        totals = self.session_metric_totals
+        total_frames = totals.get('total_frames', 0)
+        confidence_count = totals.get('confidence_count', 0)
+        avg_confidence = (
+            totals.get('confidence_sum', 0.0) / confidence_count
+            if confidence_count else
+            0.0
+        )
+        avg_concentration = (
+            totals.get('concentration_score_sum', 0.0) / total_frames
+            if total_frames else
+            0.0
+        )
+        started_at = self.session_started_at or time.time()
+        return {
+            'total_processed_frames': int(total_frames),
+            'sampled_frames': int(totals.get('sampled_frames', total_frames)),
+            'average_confidence': round(avg_confidence, 4),
+            'average_concentration_score': round(avg_concentration, 2),
+            'bad_frame_count': int(totals.get('bad_frame_count', 0)),
+            'blurry_frame_count': int(totals.get('blurry_count', 0)),
+            'low_light_frame_count': int(totals.get('low_light_count', 0)),
+            'eyes_closed_count': int(totals.get('eyes_closed_count', 0)),
+            'gaze_warning_count': int(totals.get('gaze_warning_count', 0)),
+            'session_duration_seconds': round(max(time.time() - started_at, 0.0), 2),
+        }
 
     @database_sync_to_async
     def _update_user_score_sync(self, user_id, final_score):

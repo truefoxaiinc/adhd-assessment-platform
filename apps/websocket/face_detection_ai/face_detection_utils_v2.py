@@ -695,18 +695,18 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
         if client_box_missing or client_box_is_full_frame or client_box_out_of_frame:
             _, fallback_validation = validate_client_face_box_for_fallback(
-                gray,
-                client_x,
-                client_y,
-                client_w,
-                client_h,
-                frame_width,
-                frame_height,
-                client_confidence,
-                face_timestamp_seconds,
-                frame_time_seconds,
-                face_frame_id,
-                frame_id,
+                client_x=client_x,
+                client_y=client_y,
+                client_w=client_w,
+                client_h=client_h,
+                frame_width=frame_width,
+                frame_height=frame_height,
+                gray=gray,
+                client_confidence=client_confidence,
+                face_timestamp_seconds=face_timestamp_seconds,
+                frame_time_seconds=frame_time_seconds,
+                face_frame_id=face_frame_id,
+                frame_id=frame_id,
             )
             engagement_info = update_engagement(
                 0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
