@@ -45,6 +45,7 @@ FRAME_TOO_LARGE_RESPONSE = {
     "message": "Frame is too large",
 }
 FRAME_SKIPPED_RESULT = {
+    "frame_id": None,
     "frame_sampled": False,
     "message": "Frame skipped",
 }
@@ -297,6 +298,8 @@ class TestFaceDetectionConsumerSecurity:
     async def test_valid_decoded_image_is_accepted(self, user):
         communicator = await connect_authenticated(user)
         result = successful_analysis_result()
+        payload = validate_face_payload()
+        payload["frame_id"] = "frame-test-accepted"
 
         with (
             patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(1280, 720)),
@@ -305,10 +308,12 @@ class TestFaceDetectionConsumerSecurity:
                 side_effect=lambda face_analysis_data: successful_analysis_result(),
             ) as analyze_mock,
         ):
-            await send_validate_face(communicator)
+            await communicator.send_to(text_data=json.dumps(payload))
             response = await communicator.receive_json_from(timeout=1)
 
         assert response["type"] == "validation_result"
+        assert response["frame_id"] == "frame-test-accepted"
+        assert response["result"]["frame_id"] == "frame-test-accepted"
         assert response["result"]["face_detected"] is True
         analyze_mock.assert_called_once()
         await communicator.disconnect()
@@ -363,18 +368,26 @@ class TestFaceDetectionConsumerSecurity:
         monkeypatch.setattr(FaceDetectionConsumer, "_now", lambda self: 100.0)
         communicator = await connect_authenticated(user)
         result = successful_analysis_result()
+        first_payload = validate_face_payload()
+        first_payload["frame_id"] = "frame-processed"
+        skipped_payload = validate_face_payload()
+        skipped_payload["frame_id"] = "frame-skipped"
 
         with (
             patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)) as imdecode_mock,
             patch("apps.websocket.consumers.analyze_face_attention", return_value=result) as analyze_mock,
         ):
-            await send_validate_face(communicator)
+            await communicator.send_to(text_data=json.dumps(first_payload))
             processed_response = await communicator.receive_json_from(timeout=1)
-            await send_validate_face(communicator)
+            await communicator.send_to(text_data=json.dumps(skipped_payload))
             skipped_response = await communicator.receive_json_from(timeout=1)
 
+        assert processed_response["frame_id"] == "frame-processed"
         assert processed_response["result"]["face_detected"] is True
-        assert skipped_response["result"] == FRAME_SKIPPED_RESULT
+        assert skipped_response["frame_id"] == "frame-skipped"
+        assert skipped_response["result"]["frame_id"] == "frame-skipped"
+        assert skipped_response["result"]["frame_sampled"] is False
+        assert skipped_response["result"]["message"] == "Frame skipped"
         assert imdecode_mock.call_count == 1
         assert analyze_mock.call_count == 1
         await communicator.disconnect()

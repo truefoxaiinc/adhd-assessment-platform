@@ -300,6 +300,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             face_data = data.get('face')
             frame_data = data.get('frame', {'width': self.frame_width, 'height': self.frame_height})
             frame_base64 = data.get('frame_base64')
+            request_frame_id = data.get('frame_id')
             is_assessment = data.get('is_assessment', False)
             mode = data.get('mode', 'video')
             pdf_is_visible = data.get('pdf_is_visible', False)
@@ -339,7 +340,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
 
             frame_processing_started_at = self._now()
             if not self._should_process_frame(frame_processing_started_at):
-                await self.send_frame_skipped()
+                await self.send_frame_skipped(frame_id=request_frame_id)
                 return
 
             self.inference_running = True
@@ -395,7 +396,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'confidence': face_data.get('confidence'),
                 'face_timestamp_seconds': face_data.get('timestamp_seconds'),
                 'face_frame_id': face_data.get('frame_id'),
-                'frame_id': data.get('frame_id'),
+                'frame_id': request_frame_id,
                 'frame_width': frame_data.get('width', self.frame_width),
                 'frame_height': frame_data.get('height', self.frame_height),
                 'frame_bgr': frame_bgr,
@@ -460,7 +461,9 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
 
             response_data = {
                 'type': 'validation_result',
+                'frame_id': request_frame_id,
                 'result': {
+                    'frame_id': request_frame_id,
                     'face_detected': result.get('face_detected', False),
                     'concentration_level': result.get('concentration_level', 'error'),
                     'concentration_score': result.get('concentration_score', 0),
@@ -917,10 +920,12 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             self.FRAME_TOO_LARGE_ERROR_MESSAGE,
         )
 
-    async def send_frame_skipped(self):
+    async def send_frame_skipped(self, frame_id=None):
         response_data = {
             'type': 'validation_result',
+            'frame_id': frame_id,
             'result': {
+                'frame_id': frame_id,
                 'frame_sampled': False,
                 'message': 'Frame skipped',
             },
