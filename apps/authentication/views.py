@@ -11,6 +11,7 @@ from apps.users.models import Users
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from helpers.exceptions.exceptions import safe_exception_response
 from .schemas import  (
             GetLoginResponseSchema,
         )
@@ -56,12 +57,7 @@ class LoginApiView(generics.GenericAPIView):
             return Response(self.response_format, status=status.HTTP_200_OK)
 
         except Exception as e:
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            self.response_format['status_code'] = status.HTTP_500_INTERNAL_SERVER_ERROR
-            self.response_format['status'] = False
-            self.response_format['message'] = f'exc_type : {exc_type}, fname : {fname}, tb_lineno : {exc_tb.tb_lineno}, error : {str(e)}'
-            return Response(self.response_format, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return safe_exception_response(e, context={'view': self})
 
 
 class LogoutApiView(generics.GenericAPIView):
@@ -87,7 +83,7 @@ class LogoutApiView(generics.GenericAPIView):
                 self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
                 self.response_format['status'] = False
                 self.response_format['message'] = 'Invalid refresh token'
-                self.response_format['errors'] = {'refresh': [str(e)]}
+                self.response_format['errors'] = {'refresh': ['Invalid refresh token']}
                 return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
 
             self.response_format = ResponseInfo().response
@@ -98,10 +94,4 @@ class LogoutApiView(generics.GenericAPIView):
             return Response(self.response_format, status=status.HTTP_200_OK)
 
         except Exception as e:
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            self.response_format = ResponseInfo().response
-            self.response_format['status_code'] = status.HTTP_500_INTERNAL_SERVER_ERROR
-            self.response_format['status'] = False
-            self.response_format['message'] = f'exc_type : {exc_type}, fname : {fname}, tb_lineno : {exc_tb.tb_lineno}, error : {str(e)}'
-            return Response(self.response_format, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return safe_exception_response(e, context={'view': self})

@@ -1,18 +1,53 @@
-from rest_framework.views import exception_handler
+import logging
+
 from django.http import JsonResponse
+from rest_framework import status
+from rest_framework.exceptions import (
+    AuthenticationFailed,
+    MethodNotAllowed,
+    NotAuthenticated,
+    NotFound,
+    ParseError,
+    PermissionDenied,
+    Throttled,
+    ValidationError,
+)
+from rest_framework.response import Response
+from rest_framework.views import exception_handler
 
 
-def get_response(message="", result={}, status=False, status_code=200):
+logger = logging.getLogger(__name__)
+
+
+def get_response(message="", result=None, status=False, status_code=200):
     return {
         "status": status,
         "status_code": status_code,
         "message": message,
-        "data": result,
+        "data": result or {},
+    }
+
+
+def get_safe_error_response(message, code):
+    return {
+        "success": False,
+        "message": message,
+        "code": code,
     }
 
 
 def get_error_message(error_dict):
-    field = next(iter(error_dict))
+    if isinstance(error_dict, list):
+        if not error_dict:
+            return "Request failed"
+        response = error_dict[0]
+        if isinstance(response, (dict, list)):
+            return get_error_message(response)
+        return response
+
+    if not isinstance(error_dict, dict) or not error_dict:
+        return "Request failed"
+
     response = error_dict[next(iter(error_dict))]
     if isinstance(response, dict):
         response = get_error_message(response)
@@ -25,30 +60,72 @@ def get_error_message(error_dict):
     return response
 
 
+def get_exception_code(exc, status_code):
+    if isinstance(exc, ValidationError):
+        return "VALIDATION_ERROR"
+    if isinstance(exc, (NotAuthenticated, AuthenticationFailed)):
+        return "AUTHENTICATION_ERROR"
+    if isinstance(exc, PermissionDenied):
+        return "PERMISSION_DENIED"
+    if isinstance(exc, NotFound):
+        return "NOT_FOUND"
+    if isinstance(exc, MethodNotAllowed):
+        return "METHOD_NOT_ALLOWED"
+    if isinstance(exc, ParseError):
+        return "PARSE_ERROR"
+    if isinstance(exc, Throttled):
+        return "RATE_LIMITED"
+    if status_code >= 500:
+        return "INTERNAL_ERROR"
+    return "API_ERROR"
+
+
+def get_safe_error_message(exc, error_data, status_code):
+    if status_code >= 500:
+        return "Internal server error"
+
+    if isinstance(exc, ValidationError):
+        return "Validation error"
+
+    if isinstance(exc, (NotAuthenticated, AuthenticationFailed)):
+        return "Authentication credentials were not provided or are invalid"
+
+    if isinstance(exc, PermissionDenied):
+        return "You do not have permission to perform this action"
+
+    if isinstance(error_data, dict) and "detail" in error_data:
+        return str(error_data["detail"])
+
+    if isinstance(error_data, (dict, list)) and error_data:
+        return str(get_error_message(error_data))
+
+    return "Request failed"
+
+
+def safe_exception_response(exc, *, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, context=None):
+    logger.exception(
+        "Unhandled API exception",
+        extra={
+            "status_code": status_code,
+            "view": context.get("view").__class__.__name__ if context and context.get("view") else None,
+        },
+    )
+    return Response(
+        get_safe_error_response("Internal server error", "INTERNAL_ERROR"),
+        status=status_code,
+    )
+
+
 def handle_exception(exc, context):
-    
     error_response = exception_handler(exc, context)
-    if error_response is not None:
-        error = error_response.data
+    if error_response is None:
+        return safe_exception_response(exc, context=context)
 
-        if isinstance(error, list) and error:
-            if isinstance(error[0], dict):
-                error_response.data = get_response(
-                    message=get_error_message(error),
-                    status_code=error_response.status_code,
-                )
-
-            elif isinstance(error[0], str):
-                error_response.data = get_response(
-                    message=error[0],
-                    status_code=error_response.status_code
-                )
-
-        if isinstance(error, dict):
-            error_response.data = get_response(
-                message=get_error_message(error),
-                status_code=error_response.status_code
-            )
+    status_code = error_response.status_code
+    error_response.data = get_safe_error_response(
+        get_safe_error_message(exc, error_response.data, status_code),
+        get_exception_code(exc, status_code),
+    )
     return error_response
 
 

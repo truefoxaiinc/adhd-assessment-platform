@@ -1,18 +1,41 @@
 import json
 import asyncio
 import base64
+import binascii
+import collections
+import logging
+import time
 import cv2
 import numpy as np
 import uuid
 from datetime import datetime
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from apps.websocket.face_detection_ai.face_detection_utils_v2 import (
-    analyze_face_attention_with_models,
-)
+from apps.websocket.services.face_analysis_service import analyze_face_attention
+from apps.websocket.services.rate_limit_service import WebSocketRateLimiter
+
+
+logger = logging.getLogger(__name__)
 
 
 class FaceDetectionConsumer(AsyncWebsocketConsumer):
+    SAFE_ERROR_CODE = "FACE_VALIDATION_FAILED"
+    SAFE_ERROR_MESSAGE = "Unable to process frame safely"
+    FRAME_TOO_LARGE_ERROR_CODE = "FRAME_TOO_LARGE"
+    FRAME_TOO_LARGE_ERROR_MESSAGE = "Frame is too large"
+    MAX_TEXT_MESSAGE_BYTES = 1_500_000
+    MAX_FRAME_BASE64_CHARS = 1_400_000
+    MAX_DECODED_FRAME_WIDTH = 1280
+    MAX_DECODED_FRAME_HEIGHT = 720
+    MAX_DECODED_FRAME_PIXELS = 921_600
+    FRAME_PROCESSING_INTERVAL_SECONDS = 0.5
+    RATE_LIMIT_MESSAGES = 30
+    RATE_LIMIT_WINDOW_SECONDS = 10
+    MAX_SESSION_METRIC_SAMPLES = 300
+    CLOSE_CODE_UNAUTHORIZED = 4401
+    CLOSE_CODE_POLICY_VIOLATION = 4408
+    CLOSE_CODE_RATE_LIMITED = 4429
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.frame_width = 640
@@ -27,9 +50,9 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             'batch_validation': False
         }
         self.session_id = None
-        self.session_metrics = []
+        self.session_metrics = collections.deque(maxlen=self.MAX_SESSION_METRIC_SAMPLES)
+        self.session_metric_totals = self._new_metric_totals()
         self.user_id = None
-        import collections
         self.gaze_history = collections.deque()
         self.blink_history = collections.deque()
         self.score_history = collections.deque(maxlen=5)
@@ -38,14 +61,24 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.last_response_data = None
         self.assessment_score_saved = False
         self.last_attention_state = "idle_distracted"
+        self.last_processed_frame_at = None
+        self.inference_running = False
+        self.rate_limiter = WebSocketRateLimiter(
+            self.RATE_LIMIT_MESSAGES,
+            self.RATE_LIMIT_WINDOW_SECONDS,
+        )
 
     async def connect(self):
-        # NO MODEL IMPORTS - safe user ID extraction only
         scope_user = self.scope.get("user")
-        self.user_id = getattr(scope_user, 'id', None) if scope_user and scope_user.is_authenticated else None
+        if not scope_user or not scope_user.is_authenticated:
+            await self.close(code=self.CLOSE_CODE_UNAUTHORIZED)
+            return
+
+        self.user_id = getattr(scope_user, 'id', None)
         
         self.session_id = str(uuid.uuid4())[:8]
-        self.session_metrics = []
+        self.session_metrics = collections.deque(maxlen=self.MAX_SESSION_METRIC_SAMPLES)
+        self.session_metric_totals = self._new_metric_totals()
         self.gaze_history.clear()
         self.blink_history.clear()
         self.score_history.clear()
@@ -54,6 +87,9 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.last_response_data = None
         self.assessment_score_saved = False
         self.last_attention_state = "idle_distracted"
+        self.last_processed_frame_at = None
+        self.inference_running = False
+        self.rate_limiter.clear()
 
         await self.accept()
         await self.send(text_data=json.dumps({
@@ -79,11 +115,29 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         }))
 
     async def disconnect(self, close_code):
-        if self.user_id and self.session_metrics:
+        if self.user_id and self.session_metric_totals.get('total_frames', 0):
             await self._save_assessment_score()
 
     async def receive(self, text_data):
         try:
+            if not await self._allow_message():
+                logger.warning(
+                    "WebSocket rate limit exceeded",
+                    extra={"user_id": self.user_id, "session_id": self.session_id},
+                )
+                await self.send_error()
+                await self.close(code=self.CLOSE_CODE_RATE_LIMITED)
+                return
+
+            if self._message_too_large(text_data):
+                logger.warning(
+                    "WebSocket message payload too large",
+                    extra={"user_id": self.user_id, "session_id": self.session_id},
+                )
+                await self.send_error()
+                await self.close(code=self.CLOSE_CODE_POLICY_VIOLATION)
+                return
+
             data = json.loads(text_data)
             message_type = data.get('type')
 
@@ -105,12 +159,28 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'timestamp': datetime.now().isoformat()
                 }))
             else:
-                await self.send_error(f'Unknown message type: {message_type}')
+                logger.warning(
+                    "Unknown WebSocket message type",
+                    extra={
+                        "user_id": self.user_id,
+                        "session_id": self.session_id,
+                        "message_type": message_type,
+                    },
+                )
+                await self.send_error()
 
-        except json.JSONDecodeError as e:
-            await self.send_error(f'Invalid JSON format: {str(e)}')
-        except Exception as e:
-            await self.send_error(f'Unexpected error: {str(e)}')
+        except json.JSONDecodeError:
+            logger.exception(
+                "Invalid WebSocket JSON payload",
+                extra={"user_id": self.user_id, "session_id": self.session_id},
+            )
+            await self.send_error()
+        except Exception:
+            logger.exception(
+                "Unexpected WebSocket receive error",
+                extra={"user_id": self.user_id, "session_id": self.session_id},
+            )
+            await self.send_error()
 
     async def handle_endcall(self, data):
         try:
@@ -128,7 +198,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 progress_updated = success
 
             # Save face attention assessment if metrics exist
-            if self.user_id and self.session_metrics:
+            if self.user_id and self.session_metric_totals.get('total_frames', 0):
                 await self._save_assessment_score()
 
             session_summary = self._build_session_summary(self.session_metrics)
@@ -137,7 +207,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'type': 'endcall_processed',
                 'session_id': self.session_id,
                 'user_id': self.user_id,
-                'metrics_count': len(self.session_metrics),
+                'metrics_count': self.session_metric_totals.get('total_frames', 0),
                 'session_summary': session_summary,
                 'filetype': filetype,
                 'day_completed': day_completed,
@@ -148,8 +218,12 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             }))
             await self.close()
             
-        except Exception as e:
-            await self.send_error(f'Endcall processing error: {str(e)}')
+        except Exception:
+            logger.exception(
+                "Endcall processing failed",
+                extra={"user_id": self.user_id, "session_id": self.session_id},
+            )
+            await self.send_error()
 
     # 🔥 NEW: Async wrapper for sync DB operation (FIXES SynchronousOnlyOperation)
     @database_sync_to_async
@@ -173,6 +247,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         return await self._update_learning_progress_sync(user_id, filetype, day_completed, order_number)
 
     async def handle_validate_face(self, data):
+        processing_started = False
         try:
             self.frame_count += 1
 
@@ -184,20 +259,82 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             pdf_is_visible = data.get('pdf_is_visible', False)
 
             if not face_data:
-                await self.send_error('Face data is required')
+                logger.warning(
+                    "Face validation request missing face data",
+                    extra={"user_id": self.user_id, "session_id": self.session_id},
+                )
+                await self.send_error()
                 return
 
             if not frame_base64:
-                await self.send_error('frame_base64 is required for full analysis')
+                logger.warning(
+                    "Face validation request missing frame_base64",
+                    extra={"user_id": self.user_id, "session_id": self.session_id},
+                )
+                await self.send_error()
                 return
 
+            if not isinstance(frame_base64, str):
+                logger.warning(
+                    "Face validation request frame_base64 is not a string",
+                    extra={"user_id": self.user_id, "session_id": self.session_id},
+                )
+                await self.send_error()
+                return
+
+            if len(frame_base64) > self.MAX_FRAME_BASE64_CHARS:
+                logger.warning(
+                    "Face validation frame payload too large",
+                    extra={"user_id": self.user_id, "session_id": self.session_id},
+                )
+                await self.send_error()
+                await self.close(code=self.CLOSE_CODE_POLICY_VIOLATION)
+                return
+
+            frame_processing_started_at = self._now()
+            if not self._should_process_frame(frame_processing_started_at):
+                await self.send_frame_skipped()
+                return
+
+            self.inference_running = True
+            processing_started = True
+            self.last_processed_frame_at = frame_processing_started_at
+
             # Decode frame
-            frame_bytes = base64.b64decode(frame_base64)
+            try:
+                frame_bytes = base64.b64decode(frame_base64, validate=True)
+            except (binascii.Error, ValueError):
+                logger.exception(
+                    "Invalid frame_base64 data",
+                    extra={"user_id": self.user_id, "session_id": self.session_id},
+                )
+                await self.send_error()
+                return
+
             nparr = np.frombuffer(frame_bytes, np.uint8)
             frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
             if frame_bgr is None:
-                await self.send_error('Invalid frame_base64 data')
+                logger.warning(
+                    "OpenCV could not decode frame_base64 data",
+                    extra={"user_id": self.user_id, "session_id": self.session_id},
+                )
+                await self.send_error()
+                return
+
+            if self._decoded_frame_too_large(frame_bgr):
+                frame_height, frame_width = frame_bgr.shape[:2]
+                logger.warning(
+                    "Decoded frame exceeds size limits",
+                    extra={
+                        "user_id": self.user_id,
+                        "session_id": self.session_id,
+                        "frame_width": int(frame_width),
+                        "frame_height": int(frame_height),
+                        "frame_pixels": int(frame_width * frame_height),
+                    },
+                )
+                await self.send_frame_too_large_error()
                 return
 
             face_analysis_data = {
@@ -225,7 +362,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 face_analysis_data['custom_settings'] = self.validation_settings['custom_tolerance']
 
             result = await asyncio.get_event_loop().run_in_executor(
-                None, analyze_face_attention_with_models, face_analysis_data
+                None, analyze_face_attention, face_analysis_data
             )
 
             if 'inattention_start' in result:
@@ -242,7 +379,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 analysis = result.get('analysis', {}) or {}
                 metrics = result.get('metrics', {}) or {}
                 engagement = result.get('engagement', {}) or {}
-                self.session_metrics.append({
+                self._record_session_metric({
                     'concentration_score': result.get('concentration_score', 0),
                     'gaze_ratio': metrics.get('gaze_ratio', 0.0),
                     'inattention_duration': engagement.get('inattention_duration', 0.0),
@@ -280,7 +417,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'metrics': result.get('metrics', {}),
                     'engagement': result.get('engagement', {})
                 },
-                'session_metrics_count': len(self.session_metrics),
+                'session_metrics_count': self.session_metric_totals.get('total_frames', 0),
                 'user_id': self.user_id,
                 'timestamp': datetime.now().isoformat()
             }
@@ -296,8 +433,84 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             self.last_response_data = response_data
             await self.send(text_data=json.dumps(response_data, default=str))
 
-        except Exception as e:
-            await self.send_error(f'Face validation error: {str(e)}')
+        except Exception:
+            logger.exception(
+                "Face validation failed",
+                extra={"user_id": self.user_id, "session_id": self.session_id},
+            )
+            await self.send_error()
+        finally:
+            if processing_started:
+                self.inference_running = False
+
+    def _message_too_large(self, text_data):
+        if text_data is None:
+            return False
+        return len(text_data.encode('utf-8')) > self.MAX_TEXT_MESSAGE_BYTES
+
+    async def _allow_message(self):
+        return self.rate_limiter.allow()
+
+    def _now(self):
+        return time.monotonic()
+
+    def _should_process_frame(self, now=None):
+        if self.inference_running:
+            return False
+
+        if now is None:
+            now = self._now()
+        if self.last_processed_frame_at is None:
+            return True
+
+        return (
+            now - self.last_processed_frame_at
+            >= self.FRAME_PROCESSING_INTERVAL_SECONDS
+        )
+
+    def _decoded_frame_too_large(self, frame_bgr):
+        frame_height, frame_width = frame_bgr.shape[:2]
+        frame_pixels = frame_width * frame_height
+        return (
+            frame_width > self.MAX_DECODED_FRAME_WIDTH
+            or frame_height > self.MAX_DECODED_FRAME_HEIGHT
+            or frame_pixels > self.MAX_DECODED_FRAME_PIXELS
+        )
+
+    def _new_metric_totals(self):
+        return {
+            'total_frames': 0,
+            'concentration_score_sum': 0.0,
+            'gaze_ratio_sum': 0.0,
+            'max_inattention_duration': 0.0,
+            'face_detected_count': 0,
+            'video_attentive_count': 0,
+            'head_pose_ok_count': 0,
+            'eyes_closed_count': 0,
+            'yawning_count': 0,
+            'drowsy_count': 0,
+            'side_gaze_count': 0,
+            'low_light_count': 0,
+        }
+
+    def _record_session_metric(self, metric):
+        self.session_metrics.append(metric)
+        totals = self.session_metric_totals
+        totals['total_frames'] += 1
+        totals['concentration_score_sum'] += metric.get('concentration_score', 0)
+        totals['gaze_ratio_sum'] += metric.get('gaze_ratio', 0.0)
+        totals['max_inattention_duration'] = max(
+            totals['max_inattention_duration'],
+            metric.get('inattention_duration', 0.0),
+        )
+        totals['face_detected_count'] += int(bool(metric.get('face_detected')))
+        totals['video_attentive_count'] += int(bool(metric.get('video_attentive')))
+        totals['head_pose_ok_count'] += int(bool(metric.get('head_pose_ok')))
+        totals['eyes_closed_count'] += int(bool(metric.get('eyes_closed')))
+        totals['yawning_count'] += int(bool(metric.get('yawning')))
+        totals['drowsy_count'] += int(metric.get('drowsy_state', 0.2) != 0.2)
+        totals['side_gaze_count'] += int(metric.get('gaze_state') in ['LEFT', 'RIGHT'])
+        totals['low_light_count'] += int(bool(metric.get('low_light')))
 
     async def handle_update_settings(self, data):
         try:
@@ -308,8 +521,12 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'settings': self.validation_settings,
                 'timestamp': datetime.now().isoformat()
             }))
-        except Exception as e:
-            await self.send_error(f'Settings update error: {str(e)}')
+        except Exception:
+            logger.exception(
+                "Settings update failed",
+                extra={"user_id": self.user_id, "session_id": self.session_id},
+            )
+            await self.send_error()
 
     async def handle_get_guidelines(self):
         try:
@@ -337,10 +554,44 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'guidelines': guidelines,
                 'timestamp': datetime.now().isoformat()
             }))
-        except Exception as e:
-            await self.send_error(f'Guidelines retrieval error: {str(e)}')
+        except Exception:
+            logger.exception(
+                "Guidelines retrieval failed",
+                extra={"user_id": self.user_id, "session_id": self.session_id},
+            )
+            await self.send_error()
 
     def _build_session_summary(self, metrics):
+        aggregate_total = self.session_metric_totals.get('total_frames', 0)
+        if aggregate_total:
+            totals = self.session_metric_totals
+
+            def aggregate_pct(key):
+                return round((totals[key] / aggregate_total) * 100, 2)
+
+            avg_concentration = totals['concentration_score_sum'] / aggregate_total
+            avg_gaze_ratio = totals['gaze_ratio_sum'] / aggregate_total
+            return {
+                'total_frames': aggregate_total,
+                'stored_metric_samples': len(self.session_metrics),
+                'avg_concentration_score': round(avg_concentration, 2),
+                'final_attention_score_percent': round((avg_concentration / 8.0) * 100, 2),
+                'avg_gaze_ratio': round(avg_gaze_ratio, 4),
+                'max_inattention_duration': round(totals['max_inattention_duration'], 2),
+                'face_detection_rate': aggregate_pct('face_detected_count'),
+                'attention_engagement_rate': aggregate_pct('video_attentive_count'),
+                'head_stability_rate': aggregate_pct('head_pose_ok_count'),
+                'eye_closed_rate': aggregate_pct('eyes_closed_count'),
+                'yawning_rate': aggregate_pct('yawning_count'),
+                'drowsy_rate': aggregate_pct('drowsy_count'),
+                'side_gaze_rate': aggregate_pct('side_gaze_count'),
+                'low_light_rate': aggregate_pct('low_light_count'),
+                'eyes_closed_frames': totals['eyes_closed_count'],
+                'yawning_frames': totals['yawning_count'],
+                'side_gaze_frames': totals['side_gaze_count'],
+                'low_light_frames': totals['low_light_count'],
+            }
+
         total = len(metrics)
         if total == 0:
             return {}
@@ -385,9 +636,10 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'height': self.frame_height
                 },
                 'validation_settings': self.validation_settings,
-                'session_info': {
-                    'session_id': self.session_id,
-                    'metrics_collected': len(self.session_metrics),
+                    'session_info': {
+                        'session_id': self.session_id,
+                    'metrics_collected': self.session_metric_totals.get('total_frames', 0),
+                    'stored_metric_samples': len(self.session_metrics),
                     'user_id': self.user_id
                 },
                 'supported_features': [
@@ -402,15 +654,38 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'stats': stats,
                 'timestamp': datetime.now().isoformat()
             }))
-        except Exception as e:
-            await self.send_error(f'Stats retrieval error: {str(e)}')
+        except Exception:
+            logger.exception(
+                "Stats retrieval failed",
+                extra={"user_id": self.user_id, "session_id": self.session_id},
+            )
+            await self.send_error()
 
-    async def send_error(self, message):
+    async def send_error(self, error_code=None, message=None):
         await self.send(text_data=json.dumps({
             'type': 'error',
-            'message': message,
-            'timestamp': datetime.now().isoformat()
+            'error_code': error_code or self.SAFE_ERROR_CODE,
+            'message': message or self.SAFE_ERROR_MESSAGE,
         }))
+
+    async def send_frame_too_large_error(self):
+        await self.send_error(
+            self.FRAME_TOO_LARGE_ERROR_CODE,
+            self.FRAME_TOO_LARGE_ERROR_MESSAGE,
+        )
+
+    async def send_frame_skipped(self):
+        response_data = {
+            'type': 'validation_result',
+            'result': {
+                'frame_sampled': False,
+                'message': 'Frame skipped',
+            },
+            'session_metrics_count': self.session_metric_totals.get('total_frames', 0),
+            'user_id': self.user_id,
+            'timestamp': datetime.now().isoformat(),
+        }
+        await self.send(text_data=json.dumps(response_data))
 
     # 🔥 NO TOP-LEVEL MODEL IMPORTS - LAZY LOADING ONLY
     @database_sync_to_async
@@ -453,12 +728,13 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         return user.ai_assessment_score
 
     async def _save_assessment_score(self):
-        if self.assessment_score_saved or not self.user_id or not self.session_metrics:
+        total_frames = self.session_metric_totals.get('total_frames', 0)
+        if self.assessment_score_saved or not self.user_id or not total_frames:
             return
 
-        avg_concentration = sum(m['concentration_score'] for m in self.session_metrics) / len(self.session_metrics)
+        avg_concentration = self.session_metric_totals['concentration_score_sum'] / total_frames
         final_score = round((avg_concentration / 8.0) * 100, 2)
 
-        await self._create_sessions_sync(self.user_id, self.session_id, self.session_metrics)
+        await self._create_sessions_sync(self.user_id, self.session_id, list(self.session_metrics))
         await self._update_user_score_sync(self.user_id, final_score)
         self.assessment_score_saved = True

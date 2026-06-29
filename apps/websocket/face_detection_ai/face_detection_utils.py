@@ -3,6 +3,11 @@ import cv2
 import numpy as np
 from datetime import datetime
 import base64
+import logging
+
+
+logger = logging.getLogger(__name__)
+SAFE_ANALYSIS_ERROR_MESSAGE = "Unable to process frame safely"
 
 # Load the face detection model (Haar Cascade) - load once globally
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -139,11 +144,12 @@ def analyze_face_concentration(face_data):
             }
         }
         
-    except Exception as e:
+    except Exception:
+        logger.exception("Face concentration analysis failed")
         return {
             'face_detected': False,
             'concentration_level': 'error',
-            'message': f'Error analyzing face: {str(e)}',
+            'message': SAFE_ANALYSIS_ERROR_MESSAGE,
             'timestamp': datetime.now().strftime('%H:%M:%S'),
             'analysis': {
                 'face_size_adequate': False,
@@ -198,7 +204,8 @@ def validate_face_with_opencv(image_data_base64):
             'opencv_faces': faces.tolist() if len(faces) > 0 else []
         }
         
-    except Exception as e:
+    except Exception:
+        logger.exception("OpenCV face validation failed")
         return {
-            'opencv_error': str(e)
+            'opencv_error': SAFE_ANALYSIS_ERROR_MESSAGE
         }

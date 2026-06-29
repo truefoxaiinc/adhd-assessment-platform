@@ -13,6 +13,7 @@ from imutils import face_utils
 import logging
 
 logger = logging.getLogger(__name__)
+SAFE_ANALYSIS_ERROR_MESSAGE = "Unable to process frame safely"
 
 # --------------------------
 # PATHS & MODEL LOADING
@@ -102,6 +103,183 @@ def build_analysis(
     if extra:
         analysis.update(extra)
     return analysis
+
+def build_ui_feedback(
+    *,
+    face_detected: bool,
+    concentration_score: int = 0,
+    analysis: Optional[Dict[str, Any]] = None,
+    engagement: Optional[Dict[str, Any]] = None,
+    metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    analysis = analysis or {}
+    engagement = engagement or {}
+    metrics = metrics or {}
+
+    left_eye_prob = metrics.get("left_eye_open_probability")
+    right_eye_prob = metrics.get("right_eye_open_probability")
+    left_eye_closed = (
+        left_eye_prob is not None
+        and left_eye_prob < EYE_OPEN_PROBABILITY_THRESHOLD
+    )
+    right_eye_closed = (
+        right_eye_prob is not None
+        and right_eye_prob < EYE_OPEN_PROBABILITY_THRESHOLD
+    )
+
+    gaze_state = analysis.get("gaze_state") or metrics.get("gaze_state") or "CENTER"
+    video_attentive = bool(engagement.get("video_attentive", False))
+    engagement_state = engagement.get("state", "")
+
+    flags = {
+        "can_continue": False,
+        "should_show_alert": True,
+        "low_light": bool(analysis.get("low_light", False)),
+        "face_missing": not face_detected,
+        "face_not_centered": analysis.get("face_centered") is False,
+        "face_too_close": bool(metrics.get("size_ratio", 0.0) > 0.6),
+        "face_too_far": bool(
+            metrics.get("size_ratio") is not None
+            and metrics.get("size_ratio", 0.0) < 0.15
+        ),
+        "face_on_edge": analysis.get("face_not_on_edge") is False,
+        "eyes_closed": bool(analysis.get("eyes_closed", False)),
+        "left_eye_closed": bool(left_eye_closed),
+        "right_eye_closed": bool(right_eye_closed),
+        "yawning": bool(analysis.get("yawning", False)),
+        "drowsy": analysis.get("not_drowsy") is False,
+        "looking_left": gaze_state == "LEFT",
+        "looking_right": gaze_state == "RIGHT",
+        "looking_center": gaze_state == "CENTER",
+        "head_moved": analysis.get("head_pose_ok") is False,
+        "not_video_attentive": not video_attentive,
+        "low_concentration": concentration_score < 7,
+    }
+
+    can_continue = (
+        face_detected
+        and video_attentive
+        and not flags["low_light"]
+        and not flags["eyes_closed"]
+        and not flags["left_eye_closed"]
+        and not flags["right_eye_closed"]
+        and not flags["yawning"]
+        and not flags["drowsy"]
+        and not flags["head_moved"]
+        and concentration_score >= 7
+        and engagement_state == "watching_video"
+    )
+    flags["can_continue"] = can_continue
+    flags["should_show_alert"] = not can_continue
+
+    reason = "focused"
+    title = "Focused"
+    message = "You are focused. Continue watching."
+    severity = "success"
+
+    if flags["low_light"]:
+        reason, title, message = (
+            "low_light",
+            "Lighting Alert",
+            "Lighting is too low. Move to a brighter area or turn on a light.",
+        )
+    elif flags["face_missing"]:
+        reason, title, message = (
+            "face_missing",
+            "Face Alert",
+            "Face not detected. Please keep your face inside the camera frame.",
+        )
+    elif flags["left_eye_closed"] and not flags["right_eye_closed"]:
+        reason, title, message = (
+            "left_eye_closed",
+            "Eye Alert",
+            "Left eye appears closed. Please keep both eyes open.",
+        )
+    elif flags["right_eye_closed"] and not flags["left_eye_closed"]:
+        reason, title, message = (
+            "right_eye_closed",
+            "Eye Alert",
+            "Right eye appears closed. Please keep both eyes open.",
+        )
+    elif flags["eyes_closed"]:
+        reason, title, message = (
+            "eyes_closed",
+            "Eye Alert",
+            "Eyes closed detected. Please keep your eyes open and focus on the video.",
+        )
+    elif flags["yawning"]:
+        reason, title, message = (
+            "yawning",
+            "Drowsiness Alert",
+            "Yawning detected. Please take a short break and refocus.",
+        )
+    elif flags["head_moved"]:
+        reason, title, message = (
+            "head_moved",
+            "Position Alert",
+            "Head movement detected. Please keep your head facing the screen.",
+        )
+    elif flags["looking_left"]:
+        reason, title, message = (
+            "looking_left",
+            "Attention Alert",
+            "You are looking left. Please focus on the video.",
+        )
+    elif flags["looking_right"]:
+        reason, title, message = (
+            "looking_right",
+            "Attention Alert",
+            "You are looking right. Please focus on the video.",
+        )
+    elif flags["face_not_centered"]:
+        reason, title, message = (
+            "face_not_centered",
+            "Position Alert",
+            "Please center your face in the camera frame.",
+        )
+    elif flags["face_too_close"] or flags["face_too_far"]:
+        reason, title, message = (
+            "face_distance",
+            "Position Alert",
+            "Please adjust your distance from the camera.",
+        )
+    elif flags["face_on_edge"]:
+        reason, title, message = (
+            "face_on_edge",
+            "Position Alert",
+            "Please keep your full face visible inside the frame.",
+        )
+    elif flags["drowsy"]:
+        reason, title, message = (
+            "drowsy",
+            "Drowsiness Alert",
+            "Drowsiness detected. Please take a short break and refocus.",
+        )
+    elif flags["not_video_attentive"]:
+        reason, title, message = (
+            "not_video_attentive",
+            "Attention Alert",
+            "You seem distracted. Please focus on the video.",
+        )
+    elif flags["low_concentration"]:
+        reason, title, message = (
+            "low_concentration",
+            "Attention Alert",
+            "Low concentration detected. Take a moment to refocus.",
+        )
+
+    if reason != "focused":
+        severity = "warning"
+
+    return {
+        "ui_flags": flags,
+        "ui_message": {
+            "reason": reason,
+            "title": title,
+            "message": message,
+            "severity": severity,
+        },
+    }
 
 # --------------------------
 # Low-level helpers
@@ -365,28 +543,42 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         # ✅ USE FRAME PROVIDED BY CLIENT (decoded from base64 by consumer)
         frame_bgr = face_data.get("frame_bgr")
         if frame_bgr is None:
+            analysis = build_analysis(AnalysisFlags())
+            ui_feedback = build_ui_feedback(
+                face_detected=False,
+                concentration_score=0,
+                analysis=analysis,
+            )
             return {
                 "face_detected": False,
                 "concentration_level": "error",
                 "concentration_score": 0,
-                "message": "No frame provided - frame_bgr is required from WebSocket",
+                "message": SAFE_ANALYSIS_ERROR_MESSAGE,
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "analysis": {},
+                "analysis": analysis,
                 "face_position": {},
-                "recommendations": ["Ensure frame_base64 is properly decoded in WebSocket"],
+                "recommendations": ["Please retry with a valid camera frame"],
+                **ui_feedback,
             }
         
         # Verify frame is valid OpenCV format
         if not isinstance(frame_bgr, np.ndarray):
+            analysis = build_analysis(AnalysisFlags())
+            ui_feedback = build_ui_feedback(
+                face_detected=False,
+                concentration_score=0,
+                analysis=analysis,
+            )
             return {
                 "face_detected": False,
                 "concentration_level": "error",
                 "concentration_score": 0,
-                "message": f"Invalid frame format: expected numpy array, got {type(frame_bgr)}",
+                "message": SAFE_ANALYSIS_ERROR_MESSAGE,
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "analysis": {},
+                "analysis": analysis,
                 "face_position": {},
-                "recommendations": ["Frame must be a valid numpy array"],
+                "recommendations": ["Please retry with a valid camera frame"],
+                **ui_feedback,
             }
         
         h, w = frame_bgr.shape[:2]
@@ -418,13 +610,25 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             engagement_info["state"] = "idle_distracted"
             engagement_info["video_attentive"] = False
             engagement_info["reading_focus"] = False
+            analysis = build_analysis(AnalysisFlags(), low_light)
+            metrics = {
+                "faces_count": 0,
+                "brightness_score": round(brightness_score, 2),
+            }
+            ui_feedback = build_ui_feedback(
+                face_detected=False,
+                concentration_score=0,
+                analysis=analysis,
+                engagement=engagement_info,
+                metrics=metrics,
+            )
             return {
                 "face_detected": False,
                 "concentration_level": "low",
                 "concentration_score": 0,
                 "message": "No valid client face box received",
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "analysis": build_analysis(AnalysisFlags(), low_light),
+                "analysis": analysis,
                 "face_position": {
                     "client_x": int(client_x),
                     "client_y": int(client_y),
@@ -440,10 +644,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     if low_light else
                     "Ensure the camera frame and ML Kit face box are from the same image"
                 ],
-                "metrics": {
-                    "faces_count": 0,
-                    "brightness_score": round(brightness_score, 2),
-                },
+                "metrics": metrics,
+                **ui_feedback,
             }
         
         # ✅ DETECT FACES WITH HAAR CASCADE ON PROVIDED FRAME
@@ -544,13 +746,25 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             engagement_info["state"] = "idle_distracted"
             engagement_info["video_attentive"] = False
             engagement_info["reading_focus"] = False
+            analysis = build_analysis(AnalysisFlags(), low_light)
+            metrics = {
+                "faces_count": 0,
+                "brightness_score": round(brightness_score, 2),
+            }
+            ui_feedback = build_ui_feedback(
+                face_detected=False,
+                concentration_score=0,
+                analysis=analysis,
+                engagement=engagement_info,
+                metrics=metrics,
+            )
             return {
                 "face_detected": False,
                 "concentration_level": "low",
                 "concentration_score": 0,
                 "message": "No clear face landmarks detected",
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "analysis": build_analysis(AnalysisFlags(), low_light),
+                "analysis": analysis,
                 "face_position": {
                     "server_x": int(x),
                     "server_y": int(y),
@@ -570,10 +784,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     if low_light else
                     "Ensure your face is centered and the frame orientation matches the face box"
                 ],
-                "metrics": {
-                    "faces_count": 0,
-                    "brightness_score": round(brightness_score, 2),
-                },
+                "metrics": metrics,
+                **ui_feedback,
             }
         
         # Initialize metrics
@@ -760,6 +972,15 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "yawning": yawning,
                 "gaze_state": gaze_state,
             })
+
+        analysis = build_analysis(flags, low_light, analysis_extra)
+        ui_feedback = build_ui_feedback(
+            face_detected=True,
+            concentration_score=concentration_score,
+            analysis=analysis,
+            engagement=engagement_info,
+            metrics=metrics,
+        )
         
         # ✅ RETURN COMPLETE ANALYSIS
         return {
@@ -780,21 +1001,30 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "frame_width": int(frame_width),
                 "frame_height": int(frame_height),
             },
-            "analysis": build_analysis(flags, low_light, analysis_extra),
+            "analysis": analysis,
             "engagement": engagement_info,
             "inattention_start": engagement_info.get("new_inattention_start"),
             "recommendations": recommendations,
             "metrics": metrics,
+            **ui_feedback,
         }
     
-    except Exception as e:
+    except Exception:
+        logger.exception("Face attention analysis failed")
+        analysis = build_analysis(AnalysisFlags())
+        ui_feedback = build_ui_feedback(
+            face_detected=False,
+            concentration_score=0,
+            analysis=analysis,
+        )
         return {
             "face_detected": False,
             "concentration_level": "error",
             "concentration_score": 0,
-            "message": f"Error analyzing face: {str(e)}",
+            "message": SAFE_ANALYSIS_ERROR_MESSAGE,
             "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "analysis": asdict(AnalysisFlags()),
+            "analysis": analysis,
             "face_position": {},
-            "recommendations": [f"Error occurred: {str(e)}"],
+            "recommendations": ["Please retry with a valid camera frame"],
+            **ui_feedback,
         }

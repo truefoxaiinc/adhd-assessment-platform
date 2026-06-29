@@ -32,7 +32,7 @@ The backend supports:
 ```text
 ADHD-Minder-backend/
   apps/
-    authentication/    Login, logout, JWT, OTP/password reset
+    authentication/    Login, logout, JWT authentication
     users/             Custom user model and profile APIs
     assessment/        Self-assessment questions, responses, scoring
     filehandler/       ADHD content/file listing and S3 helpers
@@ -51,16 +51,17 @@ Create a `.env` file in the project root. Use `.env.example` as the base.
 Minimum example:
 
 ```env
+DJANGO_ENV=development
 SECRET_KEY=your_django_secret_key
 DEBUG=True
 
 DB_NAME=truefoxai_db
 DB_USER=postgres
-DB_PASSWORD=postgres
+DATABASE_PASSWORD=postgres
 DB_HOST=127.0.0.1
 DB_PORT=5432
 
-JWT_SECRET_KEY=your_jwt_secret
+JWT_SIGNING_KEY=your_jwt_secret
 
 AWS_ACCESS_KEY_ID=your_aws_access_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret_key
@@ -79,6 +80,8 @@ DEFAULT_FROM_EMAIL=your_email
 
 FIREBASE_CREDENTIALS_PATH=files/attentionminder-3f4d6-firebase-adminsdk-fbsvc-704503bc6e.json
 ```
+
+Production deployments must set required secrets explicitly. When `DJANGO_ENV=production`, missing values such as `SECRET_KEY`, `DATABASE_PASSWORD`, `JWT_SIGNING_KEY`, and `EMAIL_HOST_PASSWORD` fail fast during startup.
 
 ## Running With Docker
 
@@ -235,6 +238,84 @@ password-reset/request
 password-reset/otp-verify
 password-reset/change
 social-login
+```
+
+#### Password Reset Flow
+
+Password reset is a two-step verified flow. The backend does not allow password reset using email alone.
+
+Request OTP:
+
+```text
+POST /api/users/v1/users/password-reset/request
+```
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+Verify OTP and receive a one-time reset token:
+
+```text
+POST /api/users/v1/users/password-reset/otp-verify
+```
+
+```json
+{
+  "email": "user@example.com",
+  "otp": "123456"
+}
+```
+
+Successful response:
+
+```json
+{
+  "status": true,
+  "status_code": 200,
+  "message": "Success",
+  "data": {
+    "reset_token": "one-time-reset-token"
+  },
+  "errors": {}
+}
+```
+
+Change password:
+
+```text
+POST /api/users/v1/users/password-reset/change
+```
+
+```json
+{
+  "email": "user@example.com",
+  "reset_token": "one-time-reset-token",
+  "password": "NewPassword123!"
+}
+```
+
+Security notes:
+
+- OTP values are hashed before storage.
+- Reset tokens are hashed before storage.
+- Reset tokens expire and are one-time use.
+- A password reset without `reset_token` is rejected.
+
+#### Public Registration Security
+
+Public registration creates only normal non-staff users. The API does not allow clients to set or modify:
+
+```text
+id
+is_staff
+is_admin
+is_superuser
+is_active
+groups
+user_permissions
 ```
 
 ### Assessment
@@ -425,8 +506,7 @@ If the token is valid, the first response includes the authenticated `user_id`.
 }
 ```
 
-If `user_id` is `null`, the token was not provided or could not be authenticated.
-Live validation can still respond, but progress updates and score saving require an authenticated user.
+If the token is missing or invalid, the server rejects the connection and closes the socket with code `4401`.
 
 ### Send Face Validation Data
 
@@ -451,7 +531,7 @@ The `face` object should contain the face bounding box detected on the client.
 }
 ```
 
-The server processes every fifth frame to reduce CPU usage. Frames in between may receive the last calculated response.
+The server validates message and frame size before decoding the image. Oversized frames are rejected and the socket is closed with code `4408`.
 
 ### Validation Response
 
@@ -480,6 +560,65 @@ The server processes every fifth frame to reduce CPU usage. Frames in between ma
   },
   "session_metrics_count": 1,
   "user_id": 12
+}
+```
+
+### Error Responses
+
+Invalid messages are returned in a safe WebSocket error format:
+
+```json
+{
+  "type": "error",
+  "message": "Invalid frame_base64 data",
+  "timestamp": "2026-06-28T12:00:00.000000"
+}
+```
+
+Common messages:
+
+```text
+Face data is required
+frame_base64 is required for full analysis
+frame_base64 must be a string
+Invalid frame_base64 data
+Frame payload too large
+Message payload too large
+Rate limit exceeded
+```
+
+Close codes:
+
+```text
+4401 = unauthenticated
+4408 = payload too large / policy violation
+4429 = rate limit exceeded
+```
+
+### Stats
+
+Request:
+
+```json
+{
+  "type": "get_stats"
+}
+```
+
+Response includes total collected metrics and bounded stored samples:
+
+```json
+{
+  "type": "detection_stats",
+  "stats": {
+    "session_info": {
+      "session_id": "33a3c4f9",
+      "metrics_collected": 10,
+      "stored_metric_samples": 10,
+      "user_id": 12
+    }
+  },
+  "timestamp": "2026-06-28T12:00:00.000000"
 }
 ```
 
@@ -532,6 +671,14 @@ Response:
   "session_id": "33a3c4f9",
   "user_id": 12,
   "metrics_count": 10,
+  "session_summary": {
+    "total_frames": 10,
+    "stored_metric_samples": 10,
+    "avg_concentration_score": 7.5,
+    "final_attention_score_percent": 93.75,
+    "face_detection_rate": 100.0,
+    "attention_engagement_rate": 90.0
+  },
   "filetype": "video",
   "day_completed": 1,
   "order_number": 1,
@@ -552,6 +699,20 @@ After this response, the server closes the socket.
 5. Send endcall after the video/file is completed.
 6. Read endcall_processed and let the socket close.
 ```
+
+## Error Response Format
+
+Unexpected internal API errors use a safe response format:
+
+```json
+{
+  "success": false,
+  "message": "Internal server error",
+  "code": "INTERNAL_ERROR"
+}
+```
+
+Internal details such as filenames, line numbers, traceback text, exception class names, and raw internal errors are logged server-side only and are not returned to clients.
 
 ## Deployment Notes
 
@@ -613,9 +774,9 @@ python -m pytest
 
 ## Troubleshooting
 
-### WebSocket connects but `user_id` is null
+### WebSocket closes with code 4401
 
-Cause: token is missing or invalid.
+Cause: token is missing, expired, invalid, or not accepted by JWT authentication.
 
 Fix:
 
@@ -660,3 +821,4 @@ python -m venv venv
 - Use Daphne for WebSocket support.
 - Use JWT query authentication for WebSocket clients.
 - Do not trust `user_id` from client payloads for progress or score updates.
+- Password reset requires the one-time `reset_token` returned by OTP verification.

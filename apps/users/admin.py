@@ -80,8 +80,8 @@ class UsersAdmin(ModelAdmin, DjangoUserAdmin):
 
 @admin.register(PasswordResetOTP)
 class PasswordResetOTPAdmin(ModelAdmin):
-    list_display = ('id', 'user', 'otp', 'created_at', 'expires_at')
-    list_filter = ('user', 'created_at', 'expires_at')
-    search_fields = ('user__email', 'user__username', 'otp')
+    list_display = ('id', 'user', 'is_verified', 'is_used', 'created_at', 'expires_at', 'verified_at', 'used_at')
+    list_filter = ('is_verified', 'is_used', 'created_at', 'expires_at')
+    search_fields = ('user__email', 'user__username')
     date_hierarchy = 'created_at'
     list_per_page = 25

@@ -1,8 +1,11 @@
+import secrets
+
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
-from datetime import datetime, timedelta
+from datetime import timedelta
+from django.utils.crypto import constant_time_compare, salted_hmac
 
 
 class GenderCategory(models.TextChoices):
@@ -44,7 +47,7 @@ class Users(AbstractBaseUser, PermissionsMixin):
     profile_image         = models.ImageField(_('Profile Image'), upload_to='profile_images/', blank=True, null=True)
     is_verified           = models.BooleanField(default = False)
     is_admin              = models.BooleanField(default = False)
-    is_staff              = models.BooleanField(default = True)
+    is_staff              = models.BooleanField(default = False)
     is_superuser          = models.BooleanField(default = False)
     is_deleted            = models.BooleanField(default = False)
     ai_assessment_score   = models.FloatField(_('AI Assessment Score'), blank=True, null=True)
@@ -101,15 +104,77 @@ class Users(AbstractBaseUser, PermissionsMixin):
 class PasswordResetOTP(models.Model):
     user          = models.ForeignKey(Users, on_delete=models.CASCADE)
     otp           = models.CharField(_('OTP'), max_length = 6, blank = True, null = True)
+    otp_hash      = models.CharField(_('OTP Hash'), max_length=128, blank=True, null=True)
+    reset_token_hash = models.CharField(_('Reset Token Hash'), max_length=128, blank=True, null=True)
+    is_verified   = models.BooleanField(default=False)
+    is_used       = models.BooleanField(default=False)
     created_at    = models.DateTimeField(_('Created AT'), blank=True, null=True)
     expires_at    = models.DateTimeField(_('Expires At'), blank=True, null=True)
+    verified_at   = models.DateTimeField(_('Verified At'), blank=True, null=True)
+    used_at       = models.DateTimeField(_('Used At'), blank=True, null=True)
+
+    OTP_SALT = "users.password_reset_otp"
+    RESET_TOKEN_SALT = "users.password_reset_token"
+
+    @classmethod
+    def _hash_value(cls, value, salt):
+        return salted_hmac(salt, value).hexdigest()
+
+    @classmethod
+    def create_for_user(cls, user, otp=None):
+        raw_otp = otp or f"{secrets.randbelow(1_000_000):06d}"
+        now = timezone.now()
+        cls.objects.filter(user=user, is_used=False).update(is_used=True, used_at=now)
+        instance = cls.objects.create(
+            user=user,
+            otp_hash=cls._hash_value(raw_otp, cls.OTP_SALT),
+            expires_at=now + timedelta(minutes=10),
+        )
+        return instance, raw_otp
+
+    def verify_otp(self, raw_otp):
+        if self.is_used or self.is_verified or not self.otp_hash:
+            return False
+        if self.expires_at and self.expires_at < timezone.now():
+            return False
+        return constant_time_compare(
+            self.otp_hash,
+            self._hash_value(raw_otp, self.OTP_SALT),
+        )
+
+    def issue_reset_token(self):
+        raw_token = secrets.token_urlsafe(32)
+        now = timezone.now()
+        self.reset_token_hash = self._hash_value(raw_token, self.RESET_TOKEN_SALT)
+        self.is_verified = True
+        self.verified_at = now
+        self.expires_at = now + timedelta(minutes=10)
+        self.otp_hash = None
+        self.save(update_fields=['reset_token_hash', 'is_verified', 'verified_at', 'expires_at', 'otp_hash'])
+        return raw_token
+
+    def verify_reset_token(self, raw_token):
+        if self.is_used or not self.is_verified or not self.reset_token_hash:
+            return False
+        if self.expires_at and self.expires_at < timezone.now():
+            return False
+        return constant_time_compare(
+            self.reset_token_hash,
+            self._hash_value(raw_token, self.RESET_TOKEN_SALT),
+        )
+
+    def mark_used(self):
+        self.is_used = True
+        self.used_at = timezone.now()
+        self.reset_token_hash = None
+        self.save(update_fields=['is_used', 'used_at', 'reset_token_hash'])
     
     def save(self, *args, **kwargs):
         if not self.created_at:
-            self.created_at = datetime.now()
+            self.created_at = timezone.now()
         if not self.expires_at:
-            self.expires_at = datetime.now() + timedelta(minutes=10)
+            self.expires_at = timezone.now() + timedelta(minutes=10)
         super().save(*args, **kwargs)
     
     def is_valid(self):
-        return datetime.now() <= self.expires_at
+        return bool(self.expires_at and timezone.now() <= self.expires_at and not self.is_used)

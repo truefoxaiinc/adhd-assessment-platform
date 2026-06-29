@@ -16,6 +16,7 @@ import datetime
 from decouple import config
 from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ImproperlyConfigured
 
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
@@ -44,6 +45,19 @@ env = environ.Env(
 )
 load_dotenv(find_dotenv(), override=True, verbose=True)
 
+DJANGO_ENV = config('DJANGO_ENV', default=os.environ.get('DJANGO_ENV', 'development')).lower()
+IS_PRODUCTION = DJANGO_ENV in {'prod', 'production'}
+
+def get_secret_config(key, *, default=None, aliases=()):
+    value = config(key, default=None)
+    for alias in aliases:
+        if value:
+            break
+        value = config(alias, default=None)
+    if IS_PRODUCTION and not value:
+        raise ImproperlyConfigured(f"{key} must be set when DJANGO_ENV=production")
+    return value if value is not None else default
+
 def get_env_value(key,default=None):
     try:
         return env(key, default=default)
@@ -53,11 +67,11 @@ def get_env_value(key,default=None):
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY', default='default-secret-key')
+SECRET_KEY = get_secret_config('SECRET_KEY', default='dev-only-insecure-secret-key')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = get_env_value('DEBUG', False)
@@ -266,22 +280,23 @@ AUTH_USER_MODEL = 'users.Users'
 # DATABASE_ENGINE = config('DATABASE_ENGINE', default='sqlite').lower()
 
 # if DATABASE_ENGINE == 'postgres':
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='truefoxai_db'),
-        'USER': config('DB_USER', default='postgres'),
-        'PASSWORD': config('DB_PASSWORD', default='252562'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
-    }
-}
 # DATABASES = {
 #     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': config('DB_NAME', default='truefoxai_db'),
+#         'USER': config('DB_USER', default='postgres'),
+#         'PASSWORD': get_secret_config('DATABASE_PASSWORD', aliases=('DB_PASSWORD',), default='postgres'),
+#         'HOST': config('DB_HOST', default='localhost'),
+#         'PORT': config('DB_PORT', default='5432'),
 #     }
 # }
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
+}
 
 CACHES = {
     "default": {
@@ -437,7 +452,7 @@ SIMPLE_JWT = {
     'UPDATE_LAST_LOGIN': True,
 
     'ALGORITHM': 'HS256',
-    'SIGNING_KEY': config('JWT_SECRET_KEY', default='eShVmYq3t6w9z$C&E)H@McQfTjWnZr4u7x!A%D*G-JaNdRgUkXp2s5v8y/B?E(H+'),
+    'SIGNING_KEY': get_secret_config('JWT_SIGNING_KEY', aliases=('JWT_SECRET_KEY',), default='dev-only-insecure-jwt-signing-key'),
     'VERIFYING_KEY': None,
     'AUDIENCE': None,
     'ISSUER': None,
@@ -459,7 +474,7 @@ SIMPLE_JWT = {
 EMAIL_BACKEND         = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST            = config('EMAIL_HOST', default='smtp.gmail.com')
 EMAIL_HOST_USER       = config('EMAIL_HOST_USER', default='testmailadhd@gmail.com')
-EMAIL_HOST_PASSWORD   = config('EMAIL_HOST_PASSWORD', default='test')
+EMAIL_HOST_PASSWORD   = get_secret_config('EMAIL_HOST_PASSWORD', default='')
 EMAIL_PORT            = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS         = True
 DEFAULT_FROM_EMAIL    = config('DEFAULT_FROM_EMAIL', default='testmailadhd@gmail.com')
