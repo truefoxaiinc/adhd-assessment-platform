@@ -33,6 +33,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
     LOW_LIGHT_BRIGHTNESS_THRESHOLD = 60.0
     LOW_LIGHT_CONTRAST_THRESHOLD = 25.0
     BAD_QUALITY_WARNING_FRAME_THRESHOLD = 3
+    TEMPORAL_WINDOW_SIZE = 5
+    TEMPORAL_BAD_FRAME_THRESHOLD = 3
     RATE_LIMIT_MESSAGES = 30
     RATE_LIMIT_WINDOW_SECONDS = 10
     MAX_SESSION_METRIC_SAMPLES = 300
@@ -68,6 +70,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.last_processed_frame_at = None
         self.inference_running = False
         self.bad_quality_frame_count = 0
+        self.temporal_window = collections.deque(maxlen=self.TEMPORAL_WINDOW_SIZE)
         self.rate_limiter = WebSocketRateLimiter(
             self.RATE_LIMIT_MESSAGES,
             self.RATE_LIMIT_WINDOW_SECONDS,
@@ -95,6 +98,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.last_processed_frame_at = None
         self.inference_running = False
         self.bad_quality_frame_count = 0
+        self.temporal_window = collections.deque(maxlen=self.TEMPORAL_WINDOW_SIZE)
         self.rate_limiter.clear()
 
         await self.accept()
@@ -352,6 +356,10 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'y': face_data.get('y', 0),
                 'width': face_data.get('width', 0),
                 'height': face_data.get('height', 0),
+                'confidence': face_data.get('confidence'),
+                'face_timestamp_seconds': face_data.get('timestamp_seconds'),
+                'face_frame_id': face_data.get('frame_id'),
+                'frame_id': data.get('frame_id'),
                 'frame_width': frame_data.get('width', self.frame_width),
                 'frame_height': frame_data.get('height', self.frame_height),
                 'frame_bgr': frame_bgr,
@@ -375,6 +383,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 None, analyze_face_attention, face_analysis_data
             )
             self._apply_frame_quality(result, quality)
+            self._apply_temporal_smoothing(result)
 
             if 'inattention_start' in result:
                 self.inattention_start = result['inattention_start']
@@ -422,6 +431,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'face_position': result.get('face_position', {}),
                     'recommendations': result.get('recommendations', []),
                     'quality': result.get('quality', {}),
+                    'temporal': result.get('temporal', {}),
                     'validation_passed': (
                         result.get('face_detected', False)
                         and result.get('concentration_level', '') in ['high', 'medium']
@@ -548,6 +558,70 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         engagement = result.setdefault('engagement', {})
         engagement['video_attentive'] = False
         engagement['trigger_feedback'] = True
+
+    def _apply_temporal_smoothing(self, result):
+        analysis = result.setdefault('analysis', {})
+        quality = result.setdefault('quality', {})
+        engagement = result.setdefault('engagement', {})
+
+        confidence = float(analysis.get('confidence', 1.0))
+        eyes_open = not bool(analysis.get('eyes_closed', False))
+        head_pose_valid = bool(
+            analysis.get(
+                'head_pose_valid',
+                analysis.get('head_pose_ok', True),
+            )
+        )
+        frame_state = {
+            'face_detected': bool(result.get('face_detected', False)),
+            'eyes_open': eyes_open,
+            'gaze_in_range': bool(analysis.get('gaze_in_range', True)),
+            'head_pose_valid': head_pose_valid,
+            'blurry': bool(quality.get('blurry', False)),
+            'low_light': bool(quality.get('low_light', False)),
+            'confidence': confidence,
+        }
+        frame_state['bad'] = (
+            not frame_state['face_detected']
+            or not frame_state['eyes_open']
+            or not frame_state['gaze_in_range']
+            or not frame_state['head_pose_valid']
+            or frame_state['blurry']
+            or frame_state['low_light']
+            or frame_state['confidence'] < 0.6
+        )
+
+        self.temporal_window.append(frame_state)
+        bad_frame_count = sum(1 for frame in self.temporal_window if frame['bad'])
+        smoothed_confidence = round(
+            sum(frame['confidence'] for frame in self.temporal_window)
+            / len(self.temporal_window),
+            2,
+        )
+        warning_triggered = bad_frame_count >= self.TEMPORAL_BAD_FRAME_THRESHOLD
+
+        result['temporal'] = {
+            'bad_frame_count': bad_frame_count,
+            'window_size': len(self.temporal_window),
+            'smoothed_confidence': smoothed_confidence,
+            'warning_triggered': warning_triggered,
+        }
+        analysis['eyes_open'] = eyes_open
+        analysis['head_pose_valid'] = head_pose_valid
+
+        if warning_triggered:
+            result['concentration_score'] = min(result.get('concentration_score', 0), 3)
+            result['concentration_level'] = 'low'
+            result['message'] = 'Repeated poor attention signals'
+            engagement['video_attentive'] = False
+            engagement['trigger_feedback'] = True
+            return
+
+        engagement['trigger_feedback'] = False
+        if frame_state['bad'] and result.get('concentration_level') == 'low':
+            result['concentration_score'] = max(result.get('concentration_score', 0), 4)
+            result['concentration_level'] = 'medium'
+            result['message'] = 'Transient frame variation'
 
     def _new_metric_totals(self):
         return {

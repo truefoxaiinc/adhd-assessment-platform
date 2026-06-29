@@ -53,6 +53,13 @@ READING_MAX_FREQ = 1.5
 YAWN_THRESH = 15.0
 BLINK_RATIO_THRESHOLD = 4.75
 EYE_OPEN_PROBABILITY_THRESHOLD = 0.3
+CLIENT_FALLBACK_MIN_CONFIDENCE = 0.6
+CLIENT_FALLBACK_CONFIDENCE = 0.55
+SERVER_FACE_CONFIDENCE = 0.9
+CLIENT_BOX_MIN_AREA_RATIO = 0.02
+CLIENT_BOX_MAX_AREA_RATIO = 0.3
+CLIENT_BOX_MAX_AGE_SECONDS = 1.0
+CLIENT_FALLBACK_MIN_TEXTURE_SCORE = 12.0
 
 # State variables are now passed via WebSocket consumer face_data
 
@@ -282,6 +289,85 @@ def build_ui_feedback(
     }
 
 # --------------------------
+# Client fallback validation
+# --------------------------
+def _safe_float(value, default=None):
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _client_box_texture_score(gray, x, y, width, height):
+    roi = gray[int(y):int(y + height), int(x):int(x + width)]
+    if roi.size == 0:
+        return 0.0
+    return float(np.std(roi))
+
+
+def validate_client_face_box_for_fallback(
+    *,
+    client_x,
+    client_y,
+    client_w,
+    client_h,
+    frame_width,
+    frame_height,
+    gray,
+    client_confidence=None,
+    face_timestamp_seconds=None,
+    frame_time_seconds=None,
+    face_frame_id=None,
+    frame_id=None,
+) -> Tuple[bool, Dict[str, Any]]:
+    reasons = []
+    confidence = _safe_float(client_confidence)
+    area_ratio = 0.0
+
+    if frame_width <= 0 or frame_height <= 0:
+        reasons.append("invalid_frame_dimensions")
+    if client_w <= 0 or client_h <= 0:
+        reasons.append("missing_box")
+    if client_x < 0 or client_y < 0 or client_x + client_w > frame_width or client_y + client_h > frame_height:
+        reasons.append("out_of_bounds")
+
+    if frame_width > 0 and frame_height > 0 and client_w > 0 and client_h > 0:
+        area_ratio = (client_w * client_h) / float(frame_width * frame_height)
+        if area_ratio < CLIENT_BOX_MIN_AREA_RATIO:
+            reasons.append("area_too_small")
+        if area_ratio > CLIENT_BOX_MAX_AREA_RATIO:
+            reasons.append("area_too_large")
+
+    if confidence is not None and confidence < CLIENT_FALLBACK_MIN_CONFIDENCE:
+        reasons.append("low_client_confidence")
+
+    face_ts = _safe_float(face_timestamp_seconds)
+    frame_ts = _safe_float(frame_time_seconds)
+    if face_ts is not None and frame_ts is not None:
+        if abs(frame_ts - face_ts) > CLIENT_BOX_MAX_AGE_SECONDS:
+            reasons.append("stale_timestamp")
+
+    if face_frame_id is not None and frame_id is not None and face_frame_id != frame_id:
+        reasons.append("stale_frame_id")
+
+    texture_score = 0.0
+    if not reasons:
+        texture_score = _client_box_texture_score(gray, client_x, client_y, client_w, client_h)
+        if texture_score < CLIENT_FALLBACK_MIN_TEXTURE_SCORE:
+            reasons.append("low_texture")
+
+    return not reasons, {
+        "fallback_confidence": CLIENT_FALLBACK_CONFIDENCE,
+        "client_confidence": confidence,
+        "client_box_area_ratio": round(area_ratio, 4),
+        "client_box_texture_score": round(texture_score, 2),
+        "client_box_validation_reasons": reasons,
+    }
+
+
+# --------------------------
 # Low-level helpers
 # --------------------------
 def midpoint(p1, p2) -> Tuple[int, int]:
@@ -507,6 +593,10 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         client_y = face_data.get("y", 0)
         client_w = face_data.get("width", 0)
         client_h = face_data.get("height", 0)
+        client_confidence = face_data.get("confidence")
+        face_timestamp_seconds = face_data.get("face_timestamp_seconds")
+        face_frame_id = face_data.get("face_frame_id")
+        frame_id = face_data.get("frame_id")
         frame_width = face_data.get("frame_width", 640)
         frame_height = face_data.get("frame_height", 480)
         custom_settings = face_data.get("custom_settings", {}) or {}
@@ -604,16 +694,40 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             or client_y + client_h > frame_height
         )
         if client_box_missing or client_box_is_full_frame or client_box_out_of_frame:
+            _, fallback_validation = validate_client_face_box_for_fallback(
+                gray,
+                client_x,
+                client_y,
+                client_w,
+                client_h,
+                frame_width,
+                frame_height,
+                client_confidence,
+                face_timestamp_seconds,
+                frame_time_seconds,
+                face_frame_id,
+                frame_id,
+            )
             engagement_info = update_engagement(
                 0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
             )
             engagement_info["state"] = "idle_distracted"
             engagement_info["video_attentive"] = False
             engagement_info["reading_focus"] = False
-            analysis = build_analysis(AnalysisFlags(), low_light)
+            analysis = build_analysis(
+                AnalysisFlags(),
+                low_light,
+                {
+                    "fallback_used": True,
+                    "confidence": 0.0,
+                    **fallback_validation,
+                },
+            )
             metrics = {
                 "faces_count": 0,
                 "brightness_score": round(brightness_score, 2),
+                "fallback_used": True,
+                "confidence": 0.0,
             }
             ui_feedback = build_ui_feedback(
                 face_detected=False,
@@ -664,6 +778,17 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
 
         if faces_haar:
+            fallback_used = False
+            fallback_validation = {
+                "fallback_confidence": SERVER_FACE_CONFIDENCE,
+                "client_confidence": _safe_float(client_confidence),
+                "client_box_area_ratio": round(
+                    (client_w * client_h) / float(frame_width * frame_height),
+                    4,
+                ),
+                "client_box_texture_score": 0.0,
+                "client_box_validation_reasons": [],
+            }
             # Mobile frames can contain video content plus the selfie preview.
             # Prefer the server-detected face closest to the ML Kit face box.
             faces_haar = [
@@ -676,8 +801,70 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 )
             ]
         else:
-            # ML Kit has already supplied a valid same-frame face box. Use it
-            # as the server face candidate when Haar misses mobile frames.
+            fallback_used = True
+            fallback_valid, fallback_validation = validate_client_face_box_for_fallback(
+                client_x=client_x,
+                client_y=client_y,
+                client_w=client_w,
+                client_h=client_h,
+                frame_width=frame_width,
+                frame_height=frame_height,
+                gray=gray,
+                client_confidence=client_confidence,
+                face_timestamp_seconds=face_timestamp_seconds,
+                frame_time_seconds=frame_time_seconds,
+                face_frame_id=face_frame_id,
+                frame_id=frame_id,
+            )
+            if not fallback_valid:
+                engagement_info = update_engagement(
+                    0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
+                )
+                engagement_info["state"] = "idle_distracted"
+                engagement_info["video_attentive"] = False
+                engagement_info["reading_focus"] = False
+                analysis = build_analysis(
+                    AnalysisFlags(),
+                    low_light,
+                    {
+                        "fallback_used": True,
+                        "confidence": 0.0,
+                        **fallback_validation,
+                    },
+                )
+                metrics = {
+                    "faces_count": 0,
+                    "brightness_score": round(brightness_score, 2),
+                }
+                ui_feedback = build_ui_feedback(
+                    face_detected=False,
+                    concentration_score=0,
+                    analysis=analysis,
+                    engagement=engagement_info,
+                    metrics=metrics,
+                )
+                return {
+                    "face_detected": False,
+                    "concentration_level": "low",
+                    "concentration_score": 0,
+                    "message": "Client face box fallback rejected",
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "analysis": analysis,
+                    "face_position": {
+                        "client_x": int(client_x),
+                        "client_y": int(client_y),
+                        "client_width": int(client_w),
+                        "client_height": int(client_h),
+                        "frame_width": int(frame_width),
+                        "frame_height": int(frame_height),
+                    },
+                    "engagement": engagement_info,
+                    "inattention_start": engagement_info.get("new_inattention_start"),
+                    "recommendations": ["Retake frame with a fresh, confident face detection"],
+                    "metrics": metrics,
+                    **ui_feedback,
+                }
+
             faces_haar = [(int(client_x), int(client_y), int(client_w), int(client_h))]
         
         # Use first detected face
@@ -725,17 +912,96 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         # ✅ DLIB FACIAL LANDMARKS ON ACTUAL FRAME
         rects = detector(gray, 0)
         if len(rects) == 0:
-            # Mobile ML Kit has already validated the face box on the same
-            # frame. Use it as a landmark fallback when dlib's full-frame
-            # detector misses intermittent mobile frames.
-            rects = [
-                dlib.rectangle(
-                    int(client_x),
-                    int(client_y),
-                    int(client_x + client_w),
-                    int(client_y + client_h),
+            if not fallback_used:
+                fallback_used = True
+                fallback_valid, fallback_validation = validate_client_face_box_for_fallback(
+                    client_x=client_x,
+                    client_y=client_y,
+                    client_w=client_w,
+                    client_h=client_h,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    gray=gray,
+                    client_confidence=client_confidence,
+                    face_timestamp_seconds=face_timestamp_seconds,
+                    frame_time_seconds=frame_time_seconds,
+                    face_frame_id=face_frame_id,
+                    frame_id=frame_id,
                 )
-            ]
+                if not fallback_valid:
+                    rects = []
+                else:
+                    rects = [
+                        dlib.rectangle(
+                            int(client_x),
+                            int(client_y),
+                            int(client_x + client_w),
+                            int(client_y + client_h),
+                        )
+                    ]
+            else:
+                fallback_valid = True
+                rects = [
+                    dlib.rectangle(
+                        int(client_x),
+                        int(client_y),
+                        int(client_x + client_w),
+                        int(client_y + client_h),
+                    )
+                ]
+        if len(rects) == 0 and fallback_used:
+            faces_count = 0
+            engagement_info = update_engagement(
+                0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
+            )
+            engagement_info["state"] = "idle_distracted"
+            engagement_info["video_attentive"] = False
+            engagement_info["reading_focus"] = False
+            analysis = build_analysis(
+                AnalysisFlags(),
+                low_light,
+                {
+                    "fallback_used": True,
+                    "confidence": 0.0,
+                    **fallback_validation,
+                },
+            )
+            metrics = {
+                "faces_count": 0,
+                "brightness_score": round(brightness_score, 2),
+            }
+            ui_feedback = build_ui_feedback(
+                face_detected=False,
+                concentration_score=0,
+                analysis=analysis,
+                engagement=engagement_info,
+                metrics=metrics,
+            )
+            return {
+                "face_detected": False,
+                "concentration_level": "low",
+                "concentration_score": 0,
+                "message": "Client face box fallback rejected",
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "analysis": analysis,
+                "face_position": {
+                    "server_x": int(x),
+                    "server_y": int(y),
+                    "server_width": int(fw),
+                    "server_height": int(fh),
+                    "client_x": int(client_x),
+                    "client_y": int(client_y),
+                    "client_width": int(client_w),
+                    "client_height": int(client_h),
+                    "frame_width": int(frame_width),
+                    "frame_height": int(frame_height),
+                },
+                "engagement": engagement_info,
+                "inattention_start": engagement_info.get("new_inattention_start"),
+                "recommendations": ["Retake frame with a fresh, confident face detection"],
+                "metrics": metrics,
+                **ui_feedback,
+            }
         faces_count = len(rects)
         flags.face_present = faces_count > 0
 
@@ -856,6 +1122,25 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "yawning": yawning,
                 "gaze_state": gaze_state,
             }
+        fallback_analysis = {
+            "fallback_used": bool(fallback_used),
+            "confidence": (
+                fallback_validation["fallback_confidence"]
+                if fallback_used
+                else SERVER_FACE_CONFIDENCE
+            ),
+            "client_confidence": fallback_validation.get("client_confidence"),
+            "client_box_area_ratio": fallback_validation.get("client_box_area_ratio"),
+            "client_box_texture_score": fallback_validation.get("client_box_texture_score"),
+            "client_box_validation_reasons": fallback_validation.get(
+                "client_box_validation_reasons",
+                [],
+            ),
+        }
+        if analysis_extra is None:
+            analysis_extra = fallback_analysis
+        else:
+            analysis_extra.update(fallback_analysis)
         
         # Calculate engagement
         engagement_info = update_engagement(
@@ -885,6 +1170,12 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         else:
             concentration_level = "low"
             msg = "Poor concentration - please adjust position"
+
+        if fallback_used:
+            concentration_score = min(concentration_score, 5)
+            if concentration_level == "high":
+                concentration_level = "medium"
+                msg = "Tentative face detection from client fallback"
 
         gaze_in_video_zone = engagement_info.get("video_attentive", False)
         gaze_in_pdf_zone = engagement_info.get("reading_focus", False)
@@ -965,6 +1256,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "brightness_score": round(brightness_score, 2),
             "left_eye_open_probability": left_eye_open_probability,
             "right_eye_open_probability": right_eye_open_probability,
+            "fallback_used": bool(fallback_used),
+            "confidence": fallback_analysis["confidence"],
         }
         if not is_assessment:
             metrics.update({

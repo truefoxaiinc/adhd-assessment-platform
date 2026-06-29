@@ -1,4 +1,6 @@
 import asyncio
+import collections
+import importlib
 import json
 import sys
 import types
@@ -6,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import numpy as np
 from channels.testing import WebsocketCommunicator
 from django.conf import settings
 
@@ -110,14 +113,17 @@ async def send_validate_face(communicator):
     await communicator.send_to(text_data=json.dumps(validate_face_payload()))
 
 
-def successful_analysis_result():
+def successful_analysis_result(analysis=None, concentration_level="high", concentration_score=8):
+    result_analysis = {"head_pose_ok": True, "gaze_in_range": True}
+    if analysis:
+        result_analysis.update(analysis)
     return {
         "face_detected": True,
-        "concentration_level": "high",
-        "concentration_score": 8,
+        "concentration_level": concentration_level,
+        "concentration_score": concentration_score,
         "message": "ok",
         "timestamp": "now",
-        "analysis": {"head_pose_ok": True},
+        "analysis": result_analysis,
         "face_position": {},
         "recommendations": [],
         "metrics": {"gaze_ratio": 1.0, "drowsy_state": 0.2},
@@ -133,6 +139,62 @@ def quality_result(*, blurry=False, low_light=False, blur_score=250.0, brightnes
         "brightness_score": brightness_score,
         "contrast_score": 50.0,
     }
+
+
+def load_face_utils_v2(monkeypatch):
+    fake_dlib = types.ModuleType("dlib")
+
+    class FakeRectangle:
+        def __init__(self, left, top, right, bottom):
+            self.left = left
+            self.top = top
+            self.right = right
+            self.bottom = bottom
+
+    fake_dlib.rectangle = FakeRectangle
+    fake_dlib.full_object_detection = object
+    fake_dlib.get_frontal_face_detector = lambda: (lambda gray, upsample: [])
+    fake_dlib.shape_predictor = lambda path: (lambda gray, rect: object())
+    monkeypatch.setitem(sys.modules, "dlib", fake_dlib)
+
+    fake_imutils = types.ModuleType("imutils")
+    fake_face_utils = types.ModuleType("imutils.face_utils")
+    fake_face_utils.shape_to_np = lambda landmarks: np.zeros((68, 2), dtype=np.float32)
+    fake_imutils.face_utils = fake_face_utils
+    monkeypatch.setitem(sys.modules, "imutils", fake_imutils)
+    monkeypatch.setitem(sys.modules, "imutils.face_utils", fake_face_utils)
+
+    sys.modules.pop("apps.websocket.face_detection_ai.face_detection_utils_v2", None)
+    return importlib.import_module("apps.websocket.face_detection_ai.face_detection_utils_v2")
+
+
+def textured_frame(width=640, height=480):
+    x = np.arange(width, dtype=np.uint8)
+    y = np.arange(height, dtype=np.uint8)[:, None]
+    gray = ((x + y) % 255).astype(np.uint8)
+    return np.dstack([gray, gray, gray])
+
+
+def base_face_analysis_data(frame=None, **overrides):
+    data = {
+        "x": 220,
+        "y": 120,
+        "width": 180,
+        "height": 180,
+        "confidence": 0.92,
+        "face_timestamp_seconds": 10.0,
+        "frame_time_seconds": 10.0,
+        "face_frame_id": "frame-1",
+        "frame_id": "frame-1",
+        "frame_width": 640,
+        "frame_height": 480,
+        "frame_bgr": frame if frame is not None else textured_frame(),
+        "gaze_history": collections.deque(),
+        "blink_history": collections.deque(),
+        "score_history": collections.deque(maxlen=5),
+    }
+    data.update(overrides)
+    return data
 
 
 @pytest.mark.anyio
@@ -209,7 +271,10 @@ class TestFaceDetectionConsumerSecurity:
 
         with (
             patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(1280, 720)),
-            patch("apps.websocket.consumers.analyze_face_attention", return_value=result) as analyze_mock,
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(),
+            ) as analyze_mock,
         ):
             await send_validate_face(communicator)
             response = await communicator.receive_json_from(timeout=1)
@@ -291,7 +356,10 @@ class TestFaceDetectionConsumerSecurity:
 
         with (
             patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(),
+            ),
             patch(
                 "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
                 return_value=quality_result(),
@@ -306,13 +374,158 @@ class TestFaceDetectionConsumerSecurity:
         assert response["result"]["concentration_level"] == "high"
         await communicator.disconnect()
 
+    async def test_one_bad_frame_does_not_alert(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                return_value=successful_analysis_result(
+                    analysis={"gaze_in_range": False},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        assert response["result"]["temporal"]["bad_frame_count"] == 1
+        assert response["result"]["temporal"]["warning_triggered"] is False
+        assert response["result"]["concentration_level"] == "medium"
+        assert response["result"]["feedback"]["action_required"] is False
+        await communicator.disconnect()
+
+    async def test_repeated_bad_frames_alert(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(
+                    analysis={"gaze_in_range": False},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            responses = []
+            for _ in range(3):
+                await send_validate_face(communicator)
+                responses.append(await communicator.receive_json_from(timeout=1))
+
+        assert responses[0]["result"]["feedback"]["action_required"] is False
+        assert responses[1]["result"]["feedback"]["action_required"] is False
+        assert responses[2]["result"]["temporal"]["bad_frame_count"] == 3
+        assert responses[2]["result"]["temporal"]["warning_triggered"] is True
+        assert responses[2]["result"]["concentration_level"] == "low"
+        assert responses[2]["result"]["feedback"]["action_required"] is True
+        await communicator.disconnect()
+
+    async def test_one_blink_does_not_alert(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                return_value=successful_analysis_result(
+                    analysis={"eyes_closed": True},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        assert response["result"]["analysis"]["eyes_open"] is False
+        assert response["result"]["temporal"]["bad_frame_count"] == 1
+        assert response["result"]["temporal"]["warning_triggered"] is False
+        assert response["result"]["feedback"]["action_required"] is False
+        await communicator.disconnect()
+
+    async def test_sustained_closed_eyes_alerts(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(
+                    analysis={"eyes_closed": True},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            responses = []
+            for _ in range(3):
+                await send_validate_face(communicator)
+                responses.append(await communicator.receive_json_from(timeout=1))
+
+        assert responses[2]["result"]["analysis"]["eyes_open"] is False
+        assert responses[2]["result"]["temporal"]["warning_triggered"] is True
+        assert responses[2]["result"]["feedback"]["action_required"] is True
+        await communicator.disconnect()
+
+    async def test_temporal_rolling_window_remains_bounded(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        monkeypatch.setattr(FaceDetectionConsumer, "TEMPORAL_WINDOW_SIZE", 5)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            responses = []
+            for _ in range(8):
+                await send_validate_face(communicator)
+                responses.append(await communicator.receive_json_from(timeout=1))
+
+        assert responses[-1]["result"]["temporal"]["window_size"] == 5
+        assert responses[-1]["result"]["temporal"]["bad_frame_count"] == 0
+        await communicator.disconnect()
+
     async def test_blurry_frame_is_flagged_without_hard_alert(self, user, monkeypatch):
         monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
         communicator = await connect_authenticated(user)
 
         with (
             patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(),
+            ),
             patch(
                 "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
                 return_value=quality_result(blurry=True, blur_score=12.3),
@@ -334,7 +547,10 @@ class TestFaceDetectionConsumerSecurity:
 
         with (
             patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(),
+            ),
             patch(
                 "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
                 return_value=quality_result(low_light=True, brightness_score=18.0),
@@ -354,7 +570,10 @@ class TestFaceDetectionConsumerSecurity:
 
         with (
             patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(),
+            ),
             patch(
                 "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
                 return_value=quality_result(blurry=True, blur_score=10.0),
@@ -535,7 +754,10 @@ class TestFaceDetectionConsumerSecurity:
 
         with (
             patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch("apps.websocket.consumers.analyze_face_attention", return_value=result),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(),
+            ),
         ):
             for _ in range(4):
                 await send_validate_face(communicator)
@@ -547,3 +769,87 @@ class TestFaceDetectionConsumerSecurity:
         assert stats_response["stats"]["session_info"]["stored_metric_samples"] == 2
         assert stats_response["stats"]["session_info"]["metrics_collected"] == 4
         await communicator.disconnect()
+
+
+class TestClientFaceBoxFallback:
+    def setup_method(self):
+        self._loaded_modules = []
+
+    def _configure_lightweight_analysis(self, monkeypatch, utils):
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 0.0)
+        monkeypatch.setattr(utils, "get_blinking_ratio", lambda eye_points, landmarks: 1.0)
+        monkeypatch.setattr(utils, "get_gaze_ratio", lambda frame, gray, eye_points, landmarks: 1.0)
+        monkeypatch.setattr(utils, "get_head_pose", lambda shape_np: (0.0, 0.0, 0.0))
+
+    def test_valid_server_face_does_not_use_fallback(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+
+        result = utils.analyze_face_attention_with_models(base_face_analysis_data())
+
+        assert result["face_detected"] is True
+        assert result["analysis"]["fallback_used"] is False
+        assert result["analysis"]["confidence"] == utils.SERVER_FACE_CONFIDENCE
+
+    def test_valid_client_fallback_passes_with_reduced_confidence(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "face_detection", SimpleNamespace(detectMultiScale=lambda *args, **kwargs: []))
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [])
+
+        result = utils.analyze_face_attention_with_models(base_face_analysis_data())
+
+        assert result["face_detected"] is True
+        assert result["analysis"]["fallback_used"] is True
+        assert result["analysis"]["confidence"] == utils.CLIENT_FALLBACK_CONFIDENCE
+        assert result["analysis"]["confidence"] < utils.SERVER_FACE_CONFIDENCE
+        assert result["concentration_level"] == "medium"
+
+    def test_fake_client_box_on_blank_frame_fails_or_low_confidence(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "face_detection", SimpleNamespace(detectMultiScale=lambda *args, **kwargs: []))
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [])
+        blank = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        result = utils.analyze_face_attention_with_models(base_face_analysis_data(frame=blank))
+
+        assert result["face_detected"] is False
+        assert result["analysis"]["fallback_used"] is True
+        assert result["analysis"]["confidence"] == 0.0
+        assert "low_texture" in result["analysis"]["client_box_validation_reasons"]
+        assert result["concentration_level"] == "low"
+
+    def test_out_of_bounds_client_box_rejected(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "face_detection", SimpleNamespace(detectMultiScale=lambda *args, **kwargs: []))
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [])
+
+        result = utils.analyze_face_attention_with_models(
+            base_face_analysis_data(x=600, y=120, width=180, height=180)
+        )
+
+        assert result["face_detected"] is False
+        assert result["analysis"]["fallback_used"] is True
+        assert "out_of_bounds" in result["analysis"]["client_box_validation_reasons"]
+
+    def test_stale_client_box_rejected(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "face_detection", SimpleNamespace(detectMultiScale=lambda *args, **kwargs: []))
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [])
+
+        result = utils.analyze_face_attention_with_models(
+            base_face_analysis_data(face_timestamp_seconds=8.0, frame_time_seconds=10.0)
+        )
+
+        assert result["face_detected"] is False
+        assert result["analysis"]["fallback_used"] is True
+        assert "stale_timestamp" in result["analysis"]["client_box_validation_reasons"]
