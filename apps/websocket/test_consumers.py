@@ -125,6 +125,16 @@ def successful_analysis_result():
     }
 
 
+def quality_result(*, blurry=False, low_light=False, blur_score=250.0, brightness_score=120.0):
+    return {
+        "blurry": blurry,
+        "low_light": low_light,
+        "blur_score": blur_score,
+        "brightness_score": brightness_score,
+        "contrast_score": 50.0,
+    }
+
+
 @pytest.mark.anyio
 class TestFaceDetectionConsumerSecurity:
     async def test_unauthenticated_connection_is_rejected(self):
@@ -273,6 +283,117 @@ class TestFaceDetectionConsumerSecurity:
             assert response["result"]["engagement"] == result["engagement"]
             assert response["result"]["feedback"]["show_recommendations"] is True
         assert analyze_mock.call_count == 2
+        await communicator.disconnect()
+
+    async def test_normal_frame_passes_quality(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        assert response["result"]["quality"]["blurry"] is False
+        assert response["result"]["quality"]["low_light"] is False
+        assert response["result"]["analysis"]["confidence"] == 1.0
+        assert response["result"]["concentration_level"] == "high"
+        await communicator.disconnect()
+
+    async def test_blurry_frame_is_flagged_without_hard_alert(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(blurry=True, blur_score=12.3),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        assert response["result"]["quality"]["blurry"] is True
+        assert response["result"]["quality"]["warning_triggered"] is False
+        assert response["result"]["analysis"]["confidence"] == 0.5
+        assert response["result"]["concentration_level"] == "high"
+        assert response["result"]["feedback"]["action_required"] is False
+        await communicator.disconnect()
+
+    async def test_dark_frame_is_flagged(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(low_light=True, brightness_score=18.0),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        assert response["result"]["quality"]["low_light"] is True
+        assert response["result"]["quality"]["brightness_score"] == 18.0
+        assert response["result"]["analysis"]["confidence"] == 0.5
+        await communicator.disconnect()
+
+    async def test_repeated_blurry_frames_trigger_warning(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(blurry=True, blur_score=10.0),
+            ),
+        ):
+            responses = []
+            for _ in range(3):
+                await send_validate_face(communicator)
+                responses.append(await communicator.receive_json_from(timeout=1))
+
+        assert responses[0]["result"]["quality"]["warning_triggered"] is False
+        assert responses[1]["result"]["quality"]["warning_triggered"] is False
+        assert responses[2]["result"]["quality"]["warning_triggered"] is True
+        assert responses[2]["result"]["concentration_level"] == "low"
+        assert responses[2]["result"]["concentration_score"] == 3
+        assert responses[2]["result"]["feedback"]["action_required"] is True
+        await communicator.disconnect()
+
+    async def test_repeated_dark_frames_trigger_warning(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch("apps.websocket.consumers.analyze_face_attention", return_value=successful_analysis_result()),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(low_light=True, brightness_score=20.0),
+            ),
+        ):
+            responses = []
+            for _ in range(3):
+                await send_validate_face(communicator)
+                responses.append(await communicator.receive_json_from(timeout=1))
+
+        assert responses[2]["result"]["quality"]["warning_triggered"] is True
+        assert responses[2]["result"]["quality"]["low_light"] is True
+        assert responses[2]["result"]["concentration_level"] == "low"
+        assert responses[2]["result"]["engagement"]["trigger_feedback"] is True
         await communicator.disconnect()
 
     async def test_overlapping_inference_is_prevented(self, user, monkeypatch):

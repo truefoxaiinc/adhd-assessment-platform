@@ -29,6 +29,10 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
     MAX_DECODED_FRAME_HEIGHT = 720
     MAX_DECODED_FRAME_PIXELS = 921_600
     FRAME_PROCESSING_INTERVAL_SECONDS = 0.5
+    BLUR_VARIANCE_THRESHOLD = 100.0
+    LOW_LIGHT_BRIGHTNESS_THRESHOLD = 60.0
+    LOW_LIGHT_CONTRAST_THRESHOLD = 25.0
+    BAD_QUALITY_WARNING_FRAME_THRESHOLD = 3
     RATE_LIMIT_MESSAGES = 30
     RATE_LIMIT_WINDOW_SECONDS = 10
     MAX_SESSION_METRIC_SAMPLES = 300
@@ -63,6 +67,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.last_attention_state = "idle_distracted"
         self.last_processed_frame_at = None
         self.inference_running = False
+        self.bad_quality_frame_count = 0
         self.rate_limiter = WebSocketRateLimiter(
             self.RATE_LIMIT_MESSAGES,
             self.RATE_LIMIT_WINDOW_SECONDS,
@@ -89,6 +94,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.last_attention_state = "idle_distracted"
         self.last_processed_frame_at = None
         self.inference_running = False
+        self.bad_quality_frame_count = 0
         self.rate_limiter.clear()
 
         await self.accept()
@@ -337,6 +343,10 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 await self.send_frame_too_large_error()
                 return
 
+            quality = self._assess_frame_quality(frame_bgr)
+            quality_warning_triggered = self._record_frame_quality(quality)
+            quality['warning_triggered'] = quality_warning_triggered
+
             face_analysis_data = {
                 'x': face_data.get('x', 0),
                 'y': face_data.get('y', 0),
@@ -364,6 +374,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             result = await asyncio.get_event_loop().run_in_executor(
                 None, analyze_face_attention, face_analysis_data
             )
+            self._apply_frame_quality(result, quality)
 
             if 'inattention_start' in result:
                 self.inattention_start = result['inattention_start']
@@ -410,6 +421,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'analysis': result.get('analysis', {}),
                     'face_position': result.get('face_position', {}),
                     'recommendations': result.get('recommendations', []),
+                    'quality': result.get('quality', {}),
                     'validation_passed': (
                         result.get('face_detected', False)
                         and result.get('concentration_level', '') in ['high', 'medium']
@@ -476,6 +488,66 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             or frame_height > self.MAX_DECODED_FRAME_HEIGHT
             or frame_pixels > self.MAX_DECODED_FRAME_PIXELS
         )
+
+    def _assess_frame_quality(self, frame_bgr):
+        if not isinstance(frame_bgr, np.ndarray):
+            return {
+                'blurry': False,
+                'low_light': False,
+                'blur_score': 0.0,
+                'brightness_score': 0.0,
+                'contrast_score': 0.0,
+            }
+
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        brightness_score = float(np.mean(gray))
+        contrast_score = float(np.std(gray))
+        low_light = (
+            brightness_score < self.LOW_LIGHT_BRIGHTNESS_THRESHOLD
+            or contrast_score < self.LOW_LIGHT_CONTRAST_THRESHOLD
+        )
+
+        return {
+            'blurry': blur_score < self.BLUR_VARIANCE_THRESHOLD,
+            'low_light': low_light,
+            'blur_score': round(blur_score, 2),
+            'brightness_score': round(brightness_score, 2),
+            'contrast_score': round(contrast_score, 2),
+        }
+
+    def _record_frame_quality(self, quality):
+        if quality.get('blurry') or quality.get('low_light'):
+            self.bad_quality_frame_count += 1
+        else:
+            self.bad_quality_frame_count = 0
+
+        return self.bad_quality_frame_count >= self.BAD_QUALITY_WARNING_FRAME_THRESHOLD
+
+    def _apply_frame_quality(self, result, quality):
+        analysis = result.setdefault('analysis', {})
+        metrics = result.setdefault('metrics', {})
+
+        analysis['blurry'] = bool(quality.get('blurry', False))
+        analysis['low_light'] = bool(quality.get('low_light', False))
+        metrics['blur_score'] = quality.get('blur_score', 0.0)
+        metrics['brightness_score'] = quality.get('brightness_score', 0.0)
+        metrics['contrast_score'] = quality.get('contrast_score', 0.0)
+
+        poor_quality = analysis['blurry'] or analysis['low_light']
+        warning_triggered = bool(quality.get('warning_triggered', False))
+        analysis['confidence'] = 0.5 if poor_quality else 1.0
+        result['quality'] = quality
+
+        if not warning_triggered:
+            return
+
+        result['concentration_score'] = min(result.get('concentration_score', 0), 3)
+        result['concentration_level'] = 'low'
+        result['message'] = 'Poor frame quality'
+        engagement = result.setdefault('engagement', {})
+        engagement['video_attentive'] = False
+        engagement['trigger_feedback'] = True
 
     def _new_metric_totals(self):
         return {
