@@ -42,7 +42,9 @@ predictor = dlib.shape_predictor(PREDICTOR_PATH)
 # CONSTANTS / STATE
 # --------------------------
 GAZE_LOW = 0.6
-GAZE_HIGH = 3.5
+GAZE_HIGH = 4.2
+GAZE_RIGHT_THRESHOLD = 0.45
+GAZE_LEFT_THRESHOLD = 4.2
 HEAD_LIMIT = 25
 EXPECTED_FPS = 30
 LOW_LIGHT_THRESHOLD = 80.0
@@ -706,6 +708,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         settings = {
             "gaze_low": custom_settings.get("gaze_low", GAZE_LOW),
             "gaze_high": custom_settings.get("gaze_high", GAZE_HIGH),
+            "gaze_right_threshold": custom_settings.get("gaze_right_threshold", GAZE_RIGHT_THRESHOLD),
+            "gaze_left_threshold": custom_settings.get("gaze_left_threshold", GAZE_LEFT_THRESHOLD),
             "head_limit": custom_settings.get("head_limit", HEAD_LIMIT),
             "inattention_limit": custom_settings.get("inattention_limit", INATTENTION_LIMIT),
             "reading_window": custom_settings.get("reading_window", READING_WINDOW),
@@ -1190,9 +1194,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
         flags.not_drowsy = (drowsy_state == 0.2)
 
-        if gaze_ratio <= settings["gaze_low"]:
+        if gaze_ratio < settings["gaze_right_threshold"]:
             gaze_state = "RIGHT"
-        elif gaze_ratio > settings["gaze_high"]:
+        elif gaze_ratio > settings["gaze_left_threshold"]:
             gaze_state = "LEFT"
         else:
             gaze_state = "CENTER"

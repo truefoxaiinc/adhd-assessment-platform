@@ -628,13 +628,20 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             'face_detected': bool(result.get('face_detected', False)),
             'eyes_open': eyes_open,
             'gaze_in_range': bool(analysis.get('gaze_in_range', True)),
+            'gaze_state': analysis.get('gaze_state') or metrics.get('gaze_state') or 'CENTER',
             'gaze_reliable': gaze_reliable,
             'head_pose_valid': head_pose_valid,
             'blurry': bool(quality.get('blurry', False)),
             'low_light': bool(quality.get('low_light', False)),
             'confidence': confidence,
         }
-        gaze_is_bad = frame_state['gaze_reliable'] and not frame_state['gaze_in_range']
+        clear_side_gaze = frame_state['gaze_state'] in ['LEFT', 'RIGHT']
+        gaze_is_bad = (
+            frame_state['gaze_reliable']
+            and clear_side_gaze
+            and not frame_state['gaze_in_range']
+        )
+        analysis['clear_side_gaze'] = clear_side_gaze
         frame_state['bad'] = (
             not frame_state['face_detected']
             or not frame_state['eyes_open']
@@ -677,6 +684,10 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             result['concentration_score'] = max(result.get('concentration_score', 0), 4)
             result['concentration_level'] = 'medium'
             result['message'] = 'Transient frame variation'
+        elif not frame_state['bad'] and result.get('concentration_level') == 'low':
+            result['concentration_score'] = max(result.get('concentration_score', 0), 4)
+            result['concentration_level'] = 'medium'
+            result['message'] = 'Borderline attention signal'
         elif (
             not frame_state['bad']
             and not frame_state['gaze_reliable']

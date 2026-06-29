@@ -556,7 +556,85 @@ class TestFaceDetectionConsumerSecurity:
         assert result["concentration_score"] >= 4
         await communicator.disconnect()
 
-    async def test_repeated_reliable_left_gaze_triggers_warning(self, user, monkeypatch):
+    async def test_repeated_borderline_gaze_does_not_trigger_warning(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(
+                    analysis={
+                        "gaze_in_range": True,
+                        "gaze_state": "CENTER",
+                        "eyes_closed": False,
+                        "head_pose_valid": True,
+                    },
+                    metrics={"gaze_ratio": 3.545, "gaze_state": "CENTER"},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            responses = []
+            for _ in range(3):
+                await send_validate_face(communicator)
+                responses.append(await communicator.receive_json_from(timeout=1))
+
+        final_result = responses[-1]["result"]
+        assert final_result["analysis"]["gaze_reliable"] is True
+        assert final_result["analysis"]["clear_side_gaze"] is False
+        assert final_result["temporal"]["bad_frame_count"] == 0
+        assert final_result["temporal"]["warning_triggered"] is False
+        assert final_result["concentration_level"] == "medium"
+        assert final_result["validation_passed"] is True
+        await communicator.disconnect()
+
+    async def test_valid_face_head_eyes_with_borderline_gaze_passes(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                return_value=successful_analysis_result(
+                    analysis={
+                        "gaze_in_range": True,
+                        "gaze_state": "CENTER",
+                        "eyes_closed": False,
+                        "head_pose_valid": True,
+                    },
+                    metrics={"gaze_ratio": 3.545, "gaze_state": "CENTER"},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        result = response["result"]
+        assert result["face_detected"] is True
+        assert result["analysis"]["eyes_open"] is True
+        assert result["analysis"]["head_pose_valid"] is True
+        assert result["quality"]["low_light"] is False
+        assert result["quality"]["blurry"] is False
+        assert result["temporal"]["bad_frame_count"] == 0
+        assert result["concentration_level"] == "medium"
+        assert result["validation_passed"] is True
+        await communicator.disconnect()
+
+    async def test_repeated_clear_left_gaze_triggers_warning(self, user, monkeypatch):
         monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
         communicator = await connect_authenticated(user)
 
@@ -566,7 +644,7 @@ class TestFaceDetectionConsumerSecurity:
                 "apps.websocket.consumers.analyze_face_attention",
                 side_effect=lambda face_analysis_data: successful_analysis_result(
                     analysis={"gaze_in_range": False, "gaze_state": "LEFT"},
-                    metrics={"gaze_ratio": 0.5, "gaze_state": "LEFT"},
+                    metrics={"gaze_ratio": 4.8, "gaze_state": "LEFT"},
                     concentration_level="low",
                     concentration_score=2,
                 ),
@@ -584,6 +662,7 @@ class TestFaceDetectionConsumerSecurity:
         final_result = responses[-1]["result"]
         assert final_result["analysis"]["gaze_reliable"] is True
         assert final_result["analysis"]["gaze_confidence"] == 0.8
+        assert final_result["analysis"]["clear_side_gaze"] is True
         assert final_result["temporal"]["bad_frame_count"] == 3
         assert final_result["temporal"]["warning_triggered"] is True
         assert final_result["concentration_level"] == "low"
@@ -1125,10 +1204,10 @@ class TestClientFaceBoxFallback:
     def setup_method(self):
         self._loaded_modules = []
 
-    def _configure_lightweight_analysis(self, monkeypatch, utils):
+    def _configure_lightweight_analysis(self, monkeypatch, utils, gaze_ratio=1.0):
         monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 0.0)
         monkeypatch.setattr(utils, "get_blinking_ratio", lambda eye_points, landmarks: 1.0)
-        monkeypatch.setattr(utils, "get_gaze_ratio", lambda frame, gray, eye_points, landmarks: 1.0)
+        monkeypatch.setattr(utils, "get_gaze_ratio", lambda frame, gray, eye_points, landmarks: gaze_ratio)
         monkeypatch.setattr(utils, "get_head_pose", lambda shape_np: (0.0, 0.0, 0.0))
 
     def test_valid_server_face_does_not_use_fallback(self, monkeypatch):
@@ -1203,6 +1282,23 @@ class TestClientFaceBoxFallback:
         assert result["face_detected"] is False
         assert result["analysis"]["fallback_used"] is True
         assert "stale_timestamp" in result["analysis"]["client_box_validation_reasons"]
+
+    def test_borderline_gaze_ratio_is_center_not_left(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils, gaze_ratio=3.545)
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+
+        result = utils.analyze_face_attention_with_models(base_face_analysis_data())
+
+        assert result["face_detected"] is True
+        assert result["analysis"]["gaze_state"] == "CENTER"
+        assert result["metrics"]["gaze_state"] == "CENTER"
+        assert result["metrics"]["gaze_ratio"] == 3.545
 
 
 class TestEyeClosedDetection:
