@@ -45,6 +45,8 @@ GAZE_LOW = 0.6
 GAZE_HIGH = 2.5
 GAZE_RIGHT_THRESHOLD = 0.45
 GAZE_LEFT_THRESHOLD = 2.5
+PITCH_UP_THRESHOLD = 12.0
+PITCH_DOWN_THRESHOLD = -12.0
 HEAD_LIMIT = 25
 EXPECTED_FPS = 30
 LOW_LIGHT_THRESHOLD = 80.0
@@ -245,6 +247,8 @@ def build_ui_feedback(
         "drowsy": analysis.get("not_drowsy") is False,
         "looking_left": gaze_state == "LEFT",
         "looking_right": gaze_state == "RIGHT",
+        "looking_up": gaze_state == "UP",
+        "looking_down": gaze_state == "DOWN",
         "looking_center": gaze_state == "CENTER",
         "head_moved": analysis.get("head_pose_ok") is False,
         "not_video_attentive": not video_attentive,
@@ -260,6 +264,8 @@ def build_ui_feedback(
         and not flags["right_eye_closed"]
         and not flags["yawning"]
         and not flags["drowsy"]
+        and not flags["looking_up"]
+        and not flags["looking_down"]
         and not flags["head_moved"]
         and concentration_score >= 7
         and engagement_state == "watching_video"
@@ -313,6 +319,18 @@ def build_ui_feedback(
             "head_moved",
             "Position Alert",
             "Head movement detected. Please keep your head facing the screen.",
+        )
+    elif flags["looking_up"]:
+        reason, title, message = (
+            "looking_up",
+            "Attention Alert",
+            "You are looking up. Please focus on the video.",
+        )
+    elif flags["looking_down"]:
+        reason, title, message = (
+            "looking_down",
+            "Attention Alert",
+            "You are looking down. Please focus on the video.",
         )
     elif flags["looking_left"]:
         reason, title, message = (
@@ -711,6 +729,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "gaze_high": custom_settings.get("gaze_high", GAZE_HIGH),
             "gaze_right_threshold": custom_settings.get("gaze_right_threshold", GAZE_RIGHT_THRESHOLD),
             "gaze_left_threshold": custom_settings.get("gaze_left_threshold", GAZE_LEFT_THRESHOLD),
+            "pitch_up_threshold": custom_settings.get("pitch_up_threshold", PITCH_UP_THRESHOLD),
+            "pitch_down_threshold": custom_settings.get("pitch_down_threshold", PITCH_DOWN_THRESHOLD),
             "head_limit": custom_settings.get("head_limit", HEAD_LIMIT),
             "inattention_limit": custom_settings.get("inattention_limit", INATTENTION_LIMIT),
             "reading_window": custom_settings.get("reading_window", READING_WINDOW),
@@ -1200,7 +1220,11 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
         flags.not_drowsy = (drowsy_state == 0.2)
 
-        if gaze_ratio < settings["gaze_right_threshold"]:
+        if pitch > settings["pitch_up_threshold"]:
+            gaze_state = "UP"
+        elif pitch < settings["pitch_down_threshold"]:
+            gaze_state = "DOWN"
+        elif gaze_ratio < settings["gaze_right_threshold"]:
             gaze_state = "RIGHT"
         elif gaze_ratio > settings["gaze_left_threshold"]:
             gaze_state = "LEFT"
