@@ -91,6 +91,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         }
         self.session_id = None
         self.session_started_at = None
+        self.session_started_monotonic = None
         self.session_metrics = collections.deque(maxlen=self.MAX_SESSION_METRIC_SAMPLES)
         self.session_metric_totals = self._new_metric_totals()
         self.user_id = None
@@ -121,6 +122,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         
         self.session_id = str(uuid.uuid4())[:8]
         self.session_started_at = time.time()
+        self.session_started_monotonic = self._now()
         self.session_metrics = collections.deque(maxlen=self.MAX_SESSION_METRIC_SAMPLES)
         self.session_metric_totals = self._new_metric_totals()
         self.gaze_history.clear()
@@ -346,6 +348,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             self.inference_running = True
             processing_started = True
             self.last_processed_frame_at = frame_processing_started_at
+            session_started_monotonic = self.session_started_monotonic or frame_processing_started_at
+            frame_time_seconds = max(frame_processing_started_at - session_started_monotonic, 0.0)
 
             # Decode frame
             try:
@@ -401,7 +405,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'frame_height': frame_data.get('height', self.frame_height),
                 'frame_bgr': frame_bgr,
                 'expected_fps': 30,
-                'frame_time_seconds': self.frame_count / 30.0,
+                'frame_time_seconds': frame_time_seconds,
                 'gaze_history': self.gaze_history,
                 'blink_history': self.blink_history,
                 'score_history': self.score_history,
@@ -990,7 +994,13 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             if total_frames else
             0.0
         )
-        started_at = self.session_started_at or time.time()
+        if self.session_started_monotonic is not None:
+            session_duration_seconds = time.monotonic() - self.session_started_monotonic
+        elif self.session_started_at is not None:
+            session_duration_seconds = time.time() - self.session_started_at
+        else:
+            session_duration_seconds = 0.0
+
         return {
             'total_processed_frames': int(total_frames),
             'sampled_frames': int(totals.get('sampled_frames', total_frames)),
@@ -1001,7 +1011,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             'low_light_frame_count': int(totals.get('low_light_count', 0)),
             'eyes_closed_count': int(totals.get('eyes_closed_count', 0)),
             'gaze_warning_count': int(totals.get('gaze_warning_count', 0)),
-            'session_duration_seconds': round(max(time.time() - started_at, 0.0), 2),
+            'session_duration_seconds': round(max(session_duration_seconds, 0.0), 2),
         }
 
     @database_sync_to_async
