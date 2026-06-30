@@ -54,6 +54,7 @@ READING_MIN_AMP = 0.3
 READING_MIN_FREQ = 0.1
 READING_MAX_FREQ = 1.5
 YAWN_THRESH = 15.0
+YAWN_FACE_HEIGHT_RATIO = 0.08
 BLINK_RATIO_THRESHOLD = 4.75
 EYE_OPEN_PROBABILITY_THRESHOLD = 0.3
 EAR_CLOSED_THRESHOLD = 0.2
@@ -717,6 +718,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "reading_max_freq": custom_settings.get("reading_max_freq", READING_MAX_FREQ),
             "reading_min_freq": custom_settings.get("reading_min_freq", READING_MIN_FREQ),
             "expected_fps": expected_fps,
+            "yawn_face_height_ratio": custom_settings.get("yawn_face_height_ratio", YAWN_FACE_HEIGHT_RATIO),
         }
         
         # ✅ USE FRAME PROVIDED BY CLIENT (decoded from base64 by consumer)
@@ -1180,7 +1182,11 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         right_eye_open_probability = eye_state_debug["right_eye_open_probability"]
         eye_aspect_ratio = eye_state_debug["eye_aspect_ratio"]
         eye_decision_reason = eye_state_debug["decision_reason"]
-        yawning = bool(yawn_distance > YAWN_THRESH)
+        yawn_threshold = max(
+            YAWN_THRESH,
+            float(client_h or 0) * settings["yawn_face_height_ratio"],
+        )
+        yawning = bool(yawn_distance > yawn_threshold)
 
         # Drowsiness detection
         if yawning or eyes_closed:
@@ -1331,6 +1337,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "roll": round(roll, 2),
             "blink_ratio": round(blink_ratio, 4),
             "yawn_distance": round(yawn_distance, 4),
+            "yawn_threshold": round(yawn_threshold, 4),
             "drowsy_state": drowsy_state,
             "faces_count": faces_count,
             "brightness_score": round(brightness_score, 2),
