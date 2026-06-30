@@ -42,7 +42,7 @@ predictor = dlib.shape_predictor(PREDICTOR_PATH)
 # CONSTANTS / STATE
 # --------------------------
 GAZE_LOW = 0.6
-GAZE_HIGH = 4.2
+GAZE_HIGH = 2.5
 GAZE_RIGHT_THRESHOLD = 0.45
 GAZE_LEFT_THRESHOLD = 4.2
 HEAD_LIMIT = 25

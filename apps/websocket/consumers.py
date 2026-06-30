@@ -581,7 +581,9 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         metrics = result.setdefault('metrics', {})
 
         analysis['blurry'] = bool(quality.get('blurry', False))
-        analysis['low_light'] = bool(quality.get('low_light', False))
+        low_light = bool(analysis.get('low_light', False)) or bool(quality.get('low_light', False))
+        analysis['low_light'] = low_light
+        quality['low_light'] = low_light
         metrics['blur_score'] = quality.get('blur_score', 0.0)
         metrics['brightness_score'] = quality.get('brightness_score', 0.0)
         metrics['contrast_score'] = quality.get('contrast_score', 0.0)

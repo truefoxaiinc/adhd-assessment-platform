@@ -836,6 +836,34 @@ class TestFaceDetectionConsumerSecurity:
         assert response["result"]["analysis"]["confidence"] == 0.5
         await communicator.disconnect()
 
+    async def test_analyzer_low_light_is_not_overwritten_by_consumer_quality(self, user, monkeypatch):
+        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
+        communicator = await connect_authenticated(user)
+
+        with (
+            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
+            patch(
+                "apps.websocket.consumers.analyze_face_attention",
+                side_effect=lambda face_analysis_data: successful_analysis_result(
+                    analysis={"low_light": True, "yawning": True},
+                    metrics={"brightness_score": 70.0, "yawn_distance": 18.0},
+                    concentration_level="low",
+                    concentration_score=2,
+                ),
+            ),
+            patch(
+                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
+                return_value=quality_result(low_light=False, brightness_score=70.0),
+            ),
+        ):
+            await send_validate_face(communicator)
+            response = await communicator.receive_json_from(timeout=1)
+
+        assert response["result"]["analysis"]["low_light"] is True
+        assert response["result"]["quality"]["low_light"] is True
+        assert response["result"]["analysis"]["confidence"] == 0.5
+        await communicator.disconnect()
+
     async def test_repeated_blurry_frames_trigger_warning(self, user, monkeypatch):
         monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
         communicator = await connect_authenticated(user)
