@@ -483,7 +483,9 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                         and result.get('concentration_level', '') in ['high', 'medium']
                     ),
                     'metrics': result.get('metrics', {}),
-                    'engagement': result.get('engagement', {})
+                    'engagement': result.get('engagement', {}),
+                    'ui_flags': result.get('ui_flags', {}),
+                    'ui_message': result.get('ui_message', {}),
                 },
                 'session_metrics_count': self.session_metric_totals.get('total_frames', 0),
                 'user_id': self.user_id,
