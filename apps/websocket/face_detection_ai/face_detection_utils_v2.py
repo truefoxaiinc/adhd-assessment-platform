@@ -266,6 +266,8 @@ def build_ui_feedback(
         and not flags["drowsy"]
         and not flags["looking_up"]
         and not flags["looking_down"]
+        and not flags["looking_left"]
+        and not flags["looking_right"]
         and not flags["head_moved"]
         and concentration_score >= 7
         and engagement_state == "watching_video"
