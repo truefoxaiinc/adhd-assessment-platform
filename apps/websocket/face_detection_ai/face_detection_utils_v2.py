@@ -386,6 +386,8 @@ def build_ui_feedback(
     if reason != "focused":
         severity = "warning"
 
+    flags["should_show_alert"] = severity == "warning"
+
     return {
         "ui_flags": flags,
         "ui_message": {
