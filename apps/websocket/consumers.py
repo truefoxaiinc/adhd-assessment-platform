@@ -498,6 +498,16 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'inattention_duration': result['engagement'].get('inattention_duration', 0)
                 }
 
+            logger.info(
+                "Face validation websocket response",
+                extra={
+                    "user_id": self.user_id,
+                    "session_id": self.session_id,
+                    "frame_id": request_frame_id,
+                    "websocket_response": response_data,
+                },
+            )
+
             self.last_response_data = response_data
             await self.send(text_data=json.dumps(response_data, default=str))
 
