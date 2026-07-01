@@ -499,13 +499,15 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 }
 
             logger.info(
-                "Face validation websocket response",
-                extra={
-                    "user_id": self.user_id,
-                    "session_id": self.session_id,
-                    "frame_id": request_frame_id,
-                    "websocket_response": response_data,
-                },
+                "Face validation UI feedback: %s",
+                json.dumps(
+                    {
+                        "frame_id": request_frame_id,
+                        "ui_flags": result.get('ui_flags', {}),
+                        "ui_message": result.get('ui_message', {}),
+                    },
+                    default=str,
+                ),
             )
 
             self.last_response_data = response_data
