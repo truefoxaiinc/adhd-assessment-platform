@@ -69,6 +69,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
     TEMPORAL_BAD_FRAME_THRESHOLD = 3
     GAZE_RATIO_MIN_RELIABLE = 0.2
     GAZE_RATIO_MAX_RELIABLE = 8.0
+    UI_ALERT_NOISY_REASON_THRESHOLD = 2
     RATE_LIMIT_MESSAGES = 30
     RATE_LIMIT_WINDOW_SECONDS = 10
     MAX_SESSION_METRIC_SAMPLES = 300
@@ -107,6 +108,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.inference_running = False
         self.bad_quality_frame_count = 0
         self.temporal_window = collections.deque(maxlen=self.TEMPORAL_WINDOW_SIZE)
+        self.ui_warning_reason = None
+        self.ui_warning_count = 0
         self.rate_limiter = WebSocketRateLimiter(
             self.RATE_LIMIT_MESSAGES,
             self.RATE_LIMIT_WINDOW_SECONDS,
@@ -137,6 +140,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.inference_running = False
         self.bad_quality_frame_count = 0
         self.temporal_window = collections.deque(maxlen=self.TEMPORAL_WINDOW_SIZE)
+        self.ui_warning_reason = None
+        self.ui_warning_count = 0
         self.rate_limiter.clear()
 
         await self.accept()
@@ -425,6 +430,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             )
             self._apply_frame_quality(result, quality)
             self._apply_temporal_smoothing(result)
+            self._apply_ui_alert_stability(result)
 
             if 'inattention_start' in result:
                 self.inattention_start = result['inattention_start']
@@ -728,6 +734,41 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             engagement['video_attentive'] = True
         elif engagement.get('video_attentive') is False and engagement.get('state') == 'watching_video':
             engagement['state'] = 'idle_distracted'
+
+    def _apply_ui_alert_stability(self, result):
+        """Suppress one-frame popup candidates without changing response schema."""
+        ui_flags = result.get('ui_flags')
+        ui_message = result.get('ui_message')
+        if not isinstance(ui_flags, dict) or not isinstance(ui_message, dict):
+            return
+
+        reason = str(ui_message.get('reason') or '').strip().lower()
+        severity = str(ui_message.get('severity') or '').strip().lower()
+        if severity != 'warning' or not reason or reason == 'focused':
+            self.ui_warning_reason = None
+            self.ui_warning_count = 0
+            return
+
+        if reason == self.ui_warning_reason:
+            self.ui_warning_count += 1
+        else:
+            self.ui_warning_reason = reason
+            self.ui_warning_count = 1
+
+        if self.ui_warning_count < self._ui_alert_threshold_for_reason(reason):
+            ui_flags['should_show_alert'] = False
+
+    def _ui_alert_threshold_for_reason(self, reason):
+        critical_reasons = {
+            'face_missing',
+            'eyes_closed',
+            'yawning',
+            'drowsy',
+            'low_light',
+        }
+        if reason in critical_reasons:
+            return 1
+        return self.UI_ALERT_NOISY_REASON_THRESHOLD
 
     def _new_metric_totals(self):
         return {
