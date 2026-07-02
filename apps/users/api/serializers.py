@@ -169,8 +169,12 @@ class PasswordResetChangeSerializer(serializers.Serializer):
 
 
 class SocialLoginSerializer(serializers.Serializer):
-    provider                  = serializers.CharField(required=True)
-    id_token                  = serializers.CharField(required=True)
+    provider = serializers.ChoiceField(choices=['google', 'facebook'], required=True)
+    id_token = serializers.CharField(required=True, trim_whitespace=True)
+
+    def validate_provider(self, value):
+        return value.lower()
+
     class Meta:
         model = Users
         fields = ['provider','id_token']

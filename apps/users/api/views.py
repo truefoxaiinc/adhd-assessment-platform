@@ -7,8 +7,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from helpers.custom_messages import _success
-import  os,sys,random
+import hashlib
+import hmac
+import os,sys,random
+import time
 from django.db.models import Q
+from django.db import transaction
 from .serializers import (
     SocialLoginSerializer,
     UserRegistrationSerializer,
@@ -18,6 +22,8 @@ from .serializers import (
     PasswordResetChangeSerializer
 )
 from apps.users.models import (
+    OAuthAccount,
+    OAuthProvider,
     Users
 )
 from apps.users.services.password_reset_service import PasswordResetService
@@ -287,6 +293,14 @@ class SocialLoginView(APIView):
         self.response_format = ResponseInfo().response
         super(SocialLoginView, self).__init__(**kwargs)
 
+    def _error_response(self, message, http_status=status.HTTP_400_BAD_REQUEST, errors=None):
+        self.response_format['status_code'] = http_status
+        self.response_format['status'] = False
+        self.response_format['message'] = message
+        if errors is not None:
+            self.response_format['errors'] = errors
+        return Response(self.response_format, status=http_status)
+
     def _build_success_response(self, user, http_status=status.HTTP_200_OK):
         data = GetLoginResponseSchema(user, context={'request': self.request}).data
         self.response_format['status_code'] = http_status
@@ -296,125 +310,225 @@ class SocialLoginView(APIView):
         return Response(self.response_format, status=http_status)
 
     def _get_unique_username(self, base_username):
-        username = base_username[:300]
+        username = (base_username or 'social_user')[:300]
         if not Users.objects.filter(username=username).exists():
             return username
 
-        suffix = random.randint(1000, 9999)
-        return f"{base_username[:294]}_{suffix}"[:300]
+        for _ in range(10):
+            suffix = random.randint(1000, 999999)
+            candidate = f"{username[:293]}_{suffix}"[:300]
+            if not Users.objects.filter(username=candidate).exists():
+                return candidate
+
+        return f"{username[:267]}_{random.getrandbits(128):032x}"[:300]
+
+    def _parse_facebook_birthday(self, birthday):
+        if not birthday:
+            return None
+        try:
+            from datetime import datetime
+            return datetime.strptime(birthday, '%m/%d/%Y').date()
+        except ValueError:
+            return None
+
+    def _verify_google_token(self, token):
+        if not settings.GOOGLE_OAUTH_CLIENT_IDS:
+            raise ValidationError({'provider': 'Google OAuth client id is not configured'})
+
+        payload = google_id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+        )
+
+        if payload.get('iss') not in ['accounts.google.com', 'https://accounts.google.com']:
+            raise ValidationError({'id_token': 'Invalid Google token issuer'})
+
+        if payload.get('aud') not in settings.GOOGLE_OAUTH_CLIENT_IDS:
+            raise ValidationError({'id_token': 'Google token audience mismatch'})
+
+        if not payload.get('email'):
+            raise ValidationError({'id_token': 'No email in Google token'})
+
+        if not payload.get('email_verified'):
+            raise ValidationError({'id_token': 'Google email is not verified'})
+
+        provider_subject = payload.get('sub')
+        if not provider_subject:
+            raise ValidationError({'id_token': 'No subject in Google token'})
+
+        return {
+            'provider': OAuthProvider.GOOGLE,
+            'provider_subject': provider_subject,
+            'email': payload.get('email'),
+            'email_verified': True,
+            'username': f"google_{provider_subject}"[:300],
+            'dob': None,
+        }
+
+    def _facebook_app_access_token(self):
+        if not settings.FACEBOOK_APP_ID or not settings.FACEBOOK_APP_SECRET:
+            raise ValidationError({'provider': 'Facebook app id/secret is not configured'})
+        return f"{settings.FACEBOOK_APP_ID}|{settings.FACEBOOK_APP_SECRET}"
+
+    def _facebook_appsecret_proof(self, token):
+        return hmac.new(
+            settings.FACEBOOK_APP_SECRET.encode('utf-8'),
+            token.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _verify_facebook_token(self, token):
+        app_access_token = self._facebook_app_access_token()
+        debug_response = requests.get(
+            'https://graph.facebook.com/debug_token',
+            params={
+                'input_token': token,
+                'access_token': app_access_token,
+            },
+            timeout=10,
+        )
+        if debug_response.status_code != 200:
+            raise ValidationError({'id_token': 'Invalid Facebook token'})
+
+        token_data = debug_response.json().get('data', {})
+        if not token_data.get('is_valid'):
+            raise ValidationError({'id_token': 'Invalid Facebook token'})
+
+        if str(token_data.get('app_id')) != str(settings.FACEBOOK_APP_ID):
+            raise ValidationError({'id_token': 'Facebook token audience mismatch'})
+
+        expires_at = token_data.get('expires_at')
+        if expires_at and int(expires_at) < int(time.time()):
+            raise ValidationError({'id_token': 'Facebook token has expired'})
+
+        provider_subject = token_data.get('user_id')
+        if not provider_subject:
+            raise ValidationError({'id_token': 'No user id in Facebook token'})
+
+        profile_response = requests.get(
+            'https://graph.facebook.com/me',
+            params={
+                'access_token': token,
+                'appsecret_proof': self._facebook_appsecret_proof(token),
+                'fields': 'id,email,name,birthday',
+            },
+            timeout=10,
+        )
+        if profile_response.status_code != 200:
+            raise ValidationError({'id_token': 'Unable to fetch Facebook profile'})
+
+        profile = profile_response.json()
+        if str(profile.get('id')) != str(provider_subject):
+            raise ValidationError({'id_token': 'Facebook profile mismatch'})
+
+        email = profile.get('email')
+        if not email:
+            raise ValidationError({'id_token': 'Facebook account did not return an email address'})
+
+        return {
+            'provider': OAuthProvider.FACEBOOK,
+            'provider_subject': provider_subject,
+            'email': email,
+            'email_verified': True,
+            'username': f"fb_{provider_subject}"[:300],
+            'dob': self._parse_facebook_birthday(profile.get('birthday')),
+        }
+
+    @transaction.atomic
+    def _get_or_create_social_user(self, identity):
+        oauth_account = (
+            OAuthAccount.objects
+            .select_related('user')
+            .filter(
+                provider=identity['provider'],
+                provider_subject=identity['provider_subject'],
+            )
+            .first()
+        )
+
+        if oauth_account:
+            update_fields = []
+            if oauth_account.email != identity['email']:
+                oauth_account.email = identity['email']
+                update_fields.append('email')
+            if oauth_account.email_verified != identity['email_verified']:
+                oauth_account.email_verified = identity['email_verified']
+                update_fields.append('email_verified')
+            if update_fields:
+                oauth_account.save(update_fields=update_fields)
+            return oauth_account.user, False
+
+        user, created = Users.objects.get_or_create(
+            email=identity['email'],
+            defaults={
+                'username': self._get_unique_username(identity['username']),
+                'dob': identity['dob'],
+                'is_verified': identity['email_verified'],
+            }
+        )
+
+        update_fields = []
+        if not user.username:
+            user.username = self._get_unique_username(identity['username'])
+            update_fields.append('username')
+        if identity['email_verified'] and not user.is_verified:
+            user.is_verified = True
+            update_fields.append('is_verified')
+        if identity['dob'] and not user.dob:
+            user.dob = identity['dob']
+            update_fields.append('dob')
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+        OAuthAccount.objects.get_or_create(
+            provider=identity['provider'],
+            provider_subject=identity['provider_subject'],
+            defaults={
+                'user': user,
+                'email': identity['email'],
+                'email_verified': identity['email_verified'],
+            },
+        )
+        return user, created
 
     @swagger_auto_schema(tags=["Social Login"],request_body=SocialLoginSerializer,operation_id='Social Login API',operation_description="This API allows the users to login using social media accounts",)
     def post(self, request):
         self.request = request
-        provider = (request.data.get('provider') or '').lower()
-        token = request.data.get('id_token')
-        
-        if not provider or not token:
-            self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
-            self.response_format['status'] = False
-            self.response_format['message'] = 'Missing provider or token'
-            return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
+            serializer = self.serializer_class(data=request.data)
+            if not serializer.is_valid():
+                return self._error_response(
+                    'Invalid social login request',
+                    status.HTTP_400_BAD_REQUEST,
+                    serializer.errors,
+                )
+
+            provider = serializer.validated_data['provider']
+            token = serializer.validated_data['id_token']
+
             if provider == 'google':
-                audience = settings.GOOGLE_OAUTH_CLIENT_IDS[0] if settings.GOOGLE_OAUTH_CLIENT_IDS else None
-                payload = google_id_token.verify_oauth2_token(
-                    token,
-                    google_requests.Request(),
-                    audience,
-                )
-
-                if payload.get('iss') not in ['accounts.google.com', 'https://accounts.google.com']:
-                    self.response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
-                    self.response_format['status'] = False
-                    self.response_format['message'] = 'Invalid Google token issuer'
-                    return Response(self.response_format, status=status.HTTP_401_UNAUTHORIZED)
-
-                if settings.GOOGLE_OAUTH_CLIENT_IDS and payload.get('aud') not in settings.GOOGLE_OAUTH_CLIENT_IDS:
-                    self.response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
-                    self.response_format['status'] = False
-                    self.response_format['message'] = 'Google token audience mismatch'
-                    return Response(self.response_format, status=status.HTTP_401_UNAUTHORIZED)
-                
-                logger.info("Google payload: %s", payload)
-                
-                email = payload.get('email')
-                username = f"google_{payload['sub']}"[:300]
-                is_verified = bool(payload.get('email_verified', False))
-                
-                logger.info("username: %s", username)
-
-                if not email:
-                    self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
-                    self.response_format['status'] = False
-                    self.response_format['message'] = 'No email in Google token'
-                    return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
-            
+                identity = self._verify_google_token(token)
             elif provider == 'facebook':
-                fb_response = requests.get(
-                    f"https://graph.facebook.com/me?access_token={token}&fields=id,email,name,birthday",
-                    timeout=10
-                )
-                if fb_response.status_code != 200:
-                    self.response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
-                    self.response_format['status'] = False
-                    self.response_format['message'] = 'Invalid Facebook token'
-                    return Response(self.response_format, status=status.HTTP_401_UNAUTHORIZED)
-                
-                fb_data = fb_response.json()
-                email = fb_data.get('email', f"fb_{fb_data['id']}@facebook.com")
-                username = f"fb_{fb_data['id']}"[:300]
-                is_verified = bool(fb_data.get('email'))
-                # Parse DOB if available (format: MM/DD/YYYY or MM/YYYY)
-                dob_str = fb_data.get('birthday')
-                dob = None
-                if dob_str:
-                    try:
-                        from datetime import datetime
-                        dob = datetime.strptime(dob_str, '%m/%d/%Y').date() if '/' in dob_str else None
-                    except:
-                        pass
-            
+                identity = self._verify_facebook_token(token)
             else:
-                self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
-                self.response_format['status'] = False
-                self.response_format['message'] = 'Unsupported provider'
-                return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create or update Users model
-            user, created = Users.objects.get_or_create(
-                email=email,
-                defaults={
-                    'username': self._get_unique_username(username),
-                    'dob': dob if provider == 'facebook' else None,
-                    'is_verified': is_verified,
-                }
-            )
-            
-            if not created:
-                update_fields = []
-                if not user.username:
-                    user.username = self._get_unique_username(username)
-                    update_fields.append('username')
-                if is_verified and not user.is_verified:
-                    user.is_verified = True
-                    update_fields.append('is_verified')
-                if provider == 'facebook' and dob and not user.dob:
-                    user.dob = dob
-                    update_fields.append('dob')
-                if update_fields:
-                    user.save(update_fields=update_fields)
-            
+                return self._error_response('Unsupported provider', status.HTTP_400_BAD_REQUEST)
+
+            user, created = self._get_or_create_social_user(identity)
+
             return self._build_success_response(
                 user,
                 status.HTTP_201_CREATED if created else status.HTTP_200_OK,
             )
-            
+
+        except ValidationError as e:
+            return self._error_response(
+                'Social login validation failed',
+                status.HTTP_401_UNAUTHORIZED,
+                e.detail,
+            )
         except ValueError:
-            self.response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
-            self.response_format['status'] = False
-            self.response_format['message'] = 'Invalid token format'
-            return Response(self.response_format, status=status.HTTP_401_UNAUTHORIZED)
+            return self._error_response('Invalid token format', status.HTTP_401_UNAUTHORIZED)
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
         

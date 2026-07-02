@@ -4,7 +4,7 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 
-from .models import Users, PasswordResetOTP
+from .models import OAuthAccount, Users, PasswordResetOTP
 
 
 @admin.register(Users)
@@ -84,4 +84,14 @@ class PasswordResetOTPAdmin(ModelAdmin):
     list_filter = ('is_verified', 'is_used', 'created_at', 'expires_at')
     search_fields = ('user__email', 'user__username')
     date_hierarchy = 'created_at'
+    list_per_page = 25
+
+
+@admin.register(OAuthAccount)
+class OAuthAccountAdmin(ModelAdmin):
+    list_display = ('id', 'user', 'provider', 'provider_subject', 'email', 'email_verified', 'created_at', 'updated_at')
+    list_filter = ('provider', 'email_verified', 'created_at', 'updated_at')
+    search_fields = ('user__email', 'user__username', 'provider_subject', 'email')
+    raw_id_fields = ('user',)
+    readonly_fields = ('created_at', 'updated_at')
     list_per_page = 25

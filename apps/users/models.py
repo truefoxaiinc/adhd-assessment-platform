@@ -99,6 +99,39 @@ class Users(AbstractBaseUser, PermissionsMixin):
         elif age >= 16:
             return 'adult'
         return None
+
+
+class OAuthProvider(models.TextChoices):
+    GOOGLE = 'google', _('Google')
+    FACEBOOK = 'facebook', _('Facebook')
+
+
+class OAuthAccount(models.Model):
+    user = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='oauth_accounts')
+    provider = models.CharField(_('Provider'), max_length=50, choices=OAuthProvider.choices)
+    provider_subject = models.CharField(_('Provider Subject'), max_length=255)
+    email = models.EmailField(_('Email'), max_length=255, blank=True, null=True)
+    email_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('Updated At'), auto_now=True)
+
+    class Meta:
+        verbose_name = _("OAuth Account")
+        verbose_name_plural = _("OAuth Accounts")
+        db_table = 'OAuthAccount'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'provider_subject'],
+                name='uniq_oauth_provider_subject',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'provider']),
+            models.Index(fields=['email']),
+        ]
+
+    def __str__(self):
+        return f"{self.provider}:{self.provider_subject}"
     
 
 class PasswordResetOTP(models.Model):
