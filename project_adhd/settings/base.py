@@ -40,6 +40,7 @@ GOOGLE_OAUTH_CLIENT_IDS = [
     for client_id in config('GOOGLE_OAUTH_CLIENT_IDS', default='').split(',')
     if client_id.strip()
 ]
+FACEBOOK_APP_ID = config('FACEBOOK_APP_ID', default='')
 env = environ.Env(
     DEBUG=(bool, False),
 )
@@ -57,6 +58,8 @@ def get_secret_config(key, *, default=None, aliases=()):
     if IS_PRODUCTION and not value:
         raise ImproperlyConfigured(f"{key} must be set when DJANGO_ENV=production")
     return value if value is not None else default
+
+FACEBOOK_APP_SECRET = get_secret_config('FACEBOOK_APP_SECRET', default='')
 
 def get_env_value(key,default=None):
     try:
