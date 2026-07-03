@@ -10,6 +10,7 @@ from helpers.custom_messages import _success
 import hashlib
 import hmac
 import os,sys,random
+import re
 import time
 from django.db.models import Q
 from django.db import transaction
@@ -309,6 +310,19 @@ class SocialLoginView(APIView):
         self.response_format['data'] = data
         return Response(self.response_format, status=http_status)
 
+    def _normalize_social_username(self, display_name, fallback_username):
+        username = re.sub(r'[^a-zA-Z0-9._@]+', '_', (display_name or '').strip()).strip('._')
+        return (username or fallback_username or 'social_user')[:300]
+
+    def _is_social_placeholder_username(self, username, provider):
+        if not username:
+            return True
+        if provider == OAuthProvider.GOOGLE:
+            return username.startswith('google_')
+        if provider == OAuthProvider.FACEBOOK:
+            return username.startswith('fb_')
+        return False
+
     def _get_unique_username(self, base_username):
         username = (base_username or 'social_user')[:300]
         if not Users.objects.filter(username=username).exists():
@@ -361,7 +375,10 @@ class SocialLoginView(APIView):
             'provider_subject': provider_subject,
             'email': payload.get('email'),
             'email_verified': True,
-            'username': f"google_{provider_subject}"[:300],
+            'username': self._normalize_social_username(
+                payload.get('name') or payload.get('given_name'),
+                f"google_{provider_subject}",
+            ),
             'dob': None,
         }
 
@@ -430,7 +447,10 @@ class SocialLoginView(APIView):
             'provider_subject': provider_subject,
             'email': email,
             'email_verified': True,
-            'username': f"fb_{provider_subject}"[:300],
+            'username': self._normalize_social_username(
+                profile.get('name'),
+                f"fb_{provider_subject}",
+            ),
             'dob': self._parse_facebook_birthday(profile.get('birthday')),
         }
 
@@ -456,6 +476,16 @@ class SocialLoginView(APIView):
                 update_fields.append('email_verified')
             if update_fields:
                 oauth_account.save(update_fields=update_fields)
+            user = oauth_account.user
+            user_update_fields = []
+            if self._is_social_placeholder_username(user.username, identity['provider']):
+                user.username = self._get_unique_username(identity['username'])
+                user_update_fields.append('username')
+            if identity['email_verified'] and not user.is_verified:
+                user.is_verified = True
+                user_update_fields.append('is_verified')
+            if user_update_fields:
+                user.save(update_fields=user_update_fields)
             return oauth_account.user, False
 
         user, created = Users.objects.get_or_create(
@@ -468,7 +498,7 @@ class SocialLoginView(APIView):
         )
 
         update_fields = []
-        if not user.username:
+        if self._is_social_placeholder_username(user.username, identity['provider']):
             user.username = self._get_unique_username(identity['username'])
             update_fields.append('username')
         if identity['email_verified'] and not user.is_verified:
