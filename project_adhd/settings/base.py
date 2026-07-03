@@ -135,6 +135,7 @@ LOCAL_APPS = [
     'apps.filehandler',
     'apps.progresstracker',
     'apps.articles',
+    'apps.payments',
 ]
 
 
@@ -482,6 +483,19 @@ EMAIL_HOST_PASSWORD   = get_secret_config('EMAIL_HOST_PASSWORD', default='')
 EMAIL_PORT            = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS         = True
 DEFAULT_FROM_EMAIL    = config('DEFAULT_FROM_EMAIL', default='testmailadhd@gmail.com')
+
+STRIPE_SECRET_KEY = get_secret_config('STRIPE_SECRET_KEY', default='')
+STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='')
+STRIPE_WEBHOOK_SECRET = get_secret_config('STRIPE_WEBHOOK_SECRET', default='')
+STRIPE_MONTHLY_PRICE_ID = config('STRIPE_MONTHLY_PRICE_ID', default='')
+STRIPE_SUCCESS_URL = config('STRIPE_SUCCESS_URL', default='')
+STRIPE_CANCEL_URL = config('STRIPE_CANCEL_URL', default='')
+STRIPE_BILLING_PORTAL_RETURN_URL = config('STRIPE_BILLING_PORTAL_RETURN_URL', default='')
+STRIPE_ALLOWED_REDIRECT_HOSTS = [
+    host.strip()
+    for host in config('STRIPE_ALLOWED_REDIRECT_HOSTS', default='').split(',')
+    if host.strip()
+]
 
 
 import firebase_admin
