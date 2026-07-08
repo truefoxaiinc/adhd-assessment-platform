@@ -4,6 +4,7 @@ import base64
 import binascii
 import collections
 import logging
+import os
 import time
 import cv2
 import numpy as np
@@ -16,6 +17,7 @@ from apps.websocket.services.rate_limit_service import WebSocketRateLimiter
 
 
 logger = logging.getLogger(__name__)
+WEBSOCKET_DEBUG_DIR = "/tmp/websocket_debug"
 
 
 def extract_eye_data(payload):
@@ -48,6 +50,36 @@ def extract_eye_data(payload):
         if key in face_data and key not in eye_data:
             eye_data[key] = face_data.get(key)
     return eye_data
+
+
+def _box_center(box):
+    if not box:
+        return None
+    try:
+        x, y, width, height = (float(value) for value in box)
+    except (TypeError, ValueError):
+        return None
+    if width is None or height is None or width <= 0 or height <= 0:
+        return None
+    return (x + width / 2.0, y + height / 2.0)
+
+
+def _center_distance(box_a, box_b):
+    center_a = _box_center(box_a)
+    center_b = _box_center(box_b)
+    if center_a is None or center_b is None:
+        return None
+    return round(
+        ((center_a[0] - center_b[0]) ** 2 + (center_a[1] - center_b[1]) ** 2) ** 0.5,
+        2,
+    )
+
+
+def _safe_frame_id(frame_id):
+    return "".join(
+        char if char.isalnum() or char in ("-", "_") else "_"
+        for char in str(frame_id or "no_frame_id")
+    )[:80]
 
 
 class FaceDetectionConsumer(AsyncWebsocketConsumer):
@@ -445,9 +477,14 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 }
 
             self.last_response_data = response_data
-            logger.warning(
-                "websocket_ui_message: %s",
-                response_data['result'].get('ui_message', {}),
+            self._log_frame_investigation_data(
+                result=result,
+                response_data=response_data,
+                face_data=face_data,
+                frame_data=frame_data,
+                request_frame_id=request_frame_id,
+                frame_bgr=frame_bgr,
+                frame_bytes=frame_bytes,
             )
             await self.send(text_data=json.dumps(response_data, default=str))
 
@@ -489,6 +526,174 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             frame_width > self.MAX_DECODED_FRAME_WIDTH
             or frame_height > self.MAX_DECODED_FRAME_HEIGHT
             or frame_pixels > self.MAX_DECODED_FRAME_PIXELS
+        )
+
+    def _log_frame_investigation_data(self, *, result, response_data, face_data, frame_data, request_frame_id, frame_bgr, frame_bytes):
+        face_position = result.get('face_position', {}) or {}
+        metrics = result.get('metrics', {}) or {}
+        analysis = result.get('analysis', {}) or {}
+        temporal = result.get('temporal', {}) or {}
+        ui_flags = result.get('ui_flags', {}) or {}
+        ui_message = result.get('ui_message', {}) or {}
+        payload_width = frame_data.get('width', self.frame_width)
+        payload_height = frame_data.get('height', self.frame_height)
+        decoded_height, decoded_width = frame_bgr.shape[:2]
+
+        client_face_box = {
+            'x': face_data.get('x'),
+            'y': face_data.get('y'),
+            'width': face_data.get('width'),
+            'height': face_data.get('height'),
+        }
+        server_face_box = {
+            'x': face_position.get('server_x'),
+            'y': face_position.get('server_y'),
+            'width': face_position.get('server_width'),
+            'height': face_position.get('server_height'),
+        }
+        client_box_tuple = (
+            client_face_box['x'],
+            client_face_box['y'],
+            client_face_box['width'],
+            client_face_box['height'],
+        )
+        server_box_tuple = (
+            server_face_box['x'],
+            server_face_box['y'],
+            server_face_box['width'],
+            server_face_box['height'],
+        )
+
+        debug_paths = self._save_debug_frame_images(
+            frame_bgr=frame_bgr,
+            frame_bytes=frame_bytes,
+            frame_id=request_frame_id,
+            client_box=client_box_tuple,
+            server_box=server_box_tuple,
+        )
+        frame_log = {
+            'frame_id': request_frame_id,
+            'payload_width': payload_width,
+            'payload_height': payload_height,
+            'decoded_width': decoded_width,
+            'decoded_height': decoded_height,
+            'face_detected': result.get('face_detected', False),
+            'client_face_box': client_face_box,
+            'server_face_box': server_face_box,
+            'client_server_center_distance': _center_distance(client_box_tuple, server_box_tuple),
+            'haar_faces_count': metrics.get('haar_faces_count'),
+            'dlib_faces_count': metrics.get('dlib_faces_count'),
+            'fallback_used': metrics.get('fallback_used'),
+            'debug_image_paths': debug_paths,
+        }
+        false_alert_log = {
+            'frame_id': request_frame_id,
+            'false_alert_response': {
+                'face_missing': ui_flags.get('face_missing'),
+                'yawning': ui_flags.get('yawning'),
+                'looking_down': ui_flags.get('looking_down'),
+                'head_moved': ui_flags.get('head_moved'),
+                'face_distance': (
+                    ui_message.get('reason') == 'face_distance'
+                    or ui_flags.get('face_too_close')
+                    or ui_flags.get('face_too_far')
+                ),
+                'response_result': response_data.get('result', {}),
+                'ui_message': ui_message,
+                'analysis': {
+                    'yawning': analysis.get('yawning'),
+                    'gaze_state': analysis.get('gaze_state'),
+                    'head_pose_ok': analysis.get('head_pose_ok'),
+                    'face_distance_good': analysis.get('face_distance_good'),
+                },
+            },
+        }
+        metrics_log = {
+            'frame_id': request_frame_id,
+            'metrics': {
+                'face_area_ratio': metrics.get('face_area_ratio'),
+                'size_ratio': metrics.get('size_ratio'),
+                'yawn_distance': metrics.get('yawn_distance'),
+                'blink_ratio': metrics.get('blink_ratio'),
+                'gaze_ratio': metrics.get('gaze_ratio'),
+                'pitch': metrics.get('pitch'),
+                'yaw': metrics.get('yaw'),
+                'roll': metrics.get('roll'),
+                'brightness_score': metrics.get('brightness_score'),
+                'blur_score': metrics.get('blur_score'),
+                'faces_count': metrics.get('faces_count'),
+                'left_eye_open_probability': metrics.get('left_eye_open_probability'),
+                'right_eye_open_probability': metrics.get('right_eye_open_probability'),
+            },
+        }
+        timeline_log = {
+            'timestamp': response_data.get('timestamp'),
+            'frame_id': request_frame_id,
+            'reason': ui_message.get('reason'),
+            'face_detected': result.get('face_detected', False),
+            'concentration_score': result.get('concentration_score', 0),
+            'primary_attention_reason': ui_message.get('reason') or result.get('message'),
+            'temporal_warning_reason': temporal.get('warning_reason') or ui_message.get('reason'),
+            'temporal_reason_frame_count': (
+                temporal.get('reason_frame_count')
+                or temporal.get('bad_frame_count')
+            ),
+        }
+
+        logger.warning("websocket_frame_debug: %s", frame_log)
+        logger.warning("websocket_false_alert_response: %s", false_alert_log)
+        logger.warning("websocket_false_alert_metrics: %s", metrics_log)
+        logger.warning("websocket_timeline: %s", timeline_log)
+
+    def _save_debug_frame_images(self, *, frame_bgr, frame_bytes, frame_id, client_box, server_box):
+        try:
+            os.makedirs(WEBSOCKET_DEBUG_DIR, exist_ok=True)
+            safe_id = _safe_frame_id(frame_id)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            base_name = f"{timestamp}_{safe_id}"
+            exact_path = os.path.join(WEBSOCKET_DEBUG_DIR, f"{base_name}_exact.jpg")
+            decoded_path = os.path.join(WEBSOCKET_DEBUG_DIR, f"{base_name}_decoded.jpg")
+            overlay_path = os.path.join(WEBSOCKET_DEBUG_DIR, f"{base_name}_overlay.jpg")
+
+            with open(exact_path, "wb") as image_file:
+                image_file.write(frame_bytes)
+            cv2.imwrite(decoded_path, frame_bgr)
+            overlay = frame_bgr.copy()
+            self._draw_box(overlay, client_box, (0, 255, 255), "client_mlkit")
+            self._draw_box(overlay, server_box, (0, 255, 0), "server_backend")
+            cv2.imwrite(overlay_path, overlay)
+            return {
+                'exact_image': exact_path,
+                'decoded_image': decoded_path,
+                'overlay_image': overlay_path,
+            }
+        except Exception as exc:
+            return {'error': str(exc)}
+
+    def _draw_box(self, image, box, color, label):
+        try:
+            x, y, width, height = (int(float(value)) for value in box)
+        except (TypeError, ValueError):
+            return
+        if width <= 0 or height <= 0:
+            return
+        max_y, max_x = image.shape[:2]
+        x1 = max(0, min(x, max_x - 1))
+        y1 = max(0, min(y, max_y - 1))
+        x2 = max(0, min(x + width, max_x - 1))
+        y2 = max(0, min(y + height, max_y - 1))
+        if x2 <= x1 or y2 <= y1:
+            return
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(
+            image,
+            label,
+            (x1, max(15, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            1,
+            cv2.LINE_AA,
         )
 
     def _assess_frame_quality(self, frame_bgr):
