@@ -1528,6 +1528,244 @@ class TestClientFaceBoxFallback:
         assert results[2]["analysis"]["yawn_reliable"] is True
         assert results[2]["metrics"]["drowsy_state"] == 0.8
 
+    def test_normal_talking_never_triggers_yawning(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        distances = iter([10.0, 20.0, 11.0, 21.0, 10.0, 20.0])
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: next(distances))
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+        yawn_history = collections.deque(maxlen=12)
+        yawn_state = {"state": "NO_YAWN"}
+
+        results = [
+            utils.analyze_face_attention_with_models(
+                base_face_analysis_data(
+                    frame_time_seconds=10.0 + index * 0.2,
+                    yawn_history=yawn_history,
+                    yawn_state=yawn_state,
+                    eye={
+                        "left_eye_open_probability": 0.98,
+                        "right_eye_open_probability": 0.98,
+                    },
+                )
+            )
+            for index in range(6)
+        ]
+
+        assert all(result["analysis"]["yawning"] is False for result in results)
+        assert results[-1]["metrics"]["talking_probability"] >= 0.5
+        assert results[-1]["metrics"]["yawn_confidence"] < 0.8
+
+    def test_smiling_does_not_trigger_yawning(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 8.0)
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+
+        result = utils.analyze_face_attention_with_models(base_face_analysis_data())
+
+        assert result["analysis"]["raw_yawn_candidate"] is False
+        assert result["analysis"]["yawning"] is False
+        assert result["metrics"]["mouth_open_ratio"] < utils.YAWN_RATIO_START
+
+    def test_laughing_motion_does_not_trigger_yawning(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        distances = iter([32.0, 6.0, 34.0, 7.0, 32.0, 6.0])
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: next(distances))
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+        yawn_history = collections.deque(maxlen=12)
+        yawn_state = {"state": "NO_YAWN"}
+
+        results = [
+            utils.analyze_face_attention_with_models(
+                base_face_analysis_data(
+                    frame_time_seconds=10.0 + index * 0.2,
+                    yawn_history=yawn_history,
+                    yawn_state=yawn_state,
+                )
+            )
+            for index in range(6)
+        ]
+
+        assert all(result["analysis"]["yawning"] is False for result in results)
+        assert results[-1]["metrics"]["talking_probability"] >= 0.5
+
+    def test_slightly_open_mouth_does_not_trigger_yawning(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 13.0)
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+
+        result = utils.analyze_face_attention_with_models(base_face_analysis_data())
+
+        assert result["analysis"]["raw_yawn_candidate"] is False
+        assert result["analysis"]["yawning"] is False
+
+    def test_blurred_image_reduces_yawn_confidence(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 30.0)
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+        yawn_history = collections.deque(maxlen=12)
+        yawn_state = {"state": "NO_YAWN"}
+
+        results = [
+            utils.analyze_face_attention_with_models(
+                base_face_analysis_data(
+                    frame_time_seconds=10.0 + index * 0.4,
+                    yawn_history=yawn_history,
+                    yawn_state=yawn_state,
+                    frame_quality={"blur_severity": "blurry"},
+                )
+            )
+            for index in range(3)
+        ]
+
+        assert results[-1]["analysis"]["yawning"] is False
+        assert results[-1]["metrics"]["yawn_confidence"] < 0.8
+
+    def test_low_light_reduces_yawn_confidence(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 30.0)
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+        yawn_history = collections.deque(maxlen=12)
+        yawn_state = {"state": "NO_YAWN"}
+
+        results = [
+            utils.analyze_face_attention_with_models(
+                base_face_analysis_data(
+                    frame_time_seconds=10.0 + index * 0.4,
+                    yawn_history=yawn_history,
+                    yawn_state=yawn_state,
+                    frame_quality={"low_light": True},
+                )
+            )
+            for index in range(3)
+        ]
+
+        assert results[-1]["analysis"]["yawning"] is False
+        assert results[-1]["metrics"]["yawn_confidence"] < 0.8
+
+    def test_moving_face_reduces_yawn_confidence(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 30.0)
+        boxes = iter([(220, 120, 180, 180), (280, 170, 160, 160), (180, 90, 210, 210)])
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [next(boxes)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+        yawn_history = collections.deque(maxlen=12)
+        yawn_state = {"state": "NO_YAWN"}
+
+        results = [
+            utils.analyze_face_attention_with_models(
+                base_face_analysis_data(
+                    frame_time_seconds=10.0 + index * 0.4,
+                    yawn_history=yawn_history,
+                    yawn_state=yawn_state,
+                )
+            )
+            for index in range(3)
+        ]
+
+        assert results[-1]["analysis"]["yawning"] is False
+        assert results[-1]["metrics"]["face_stability"] < 0.55
+
+    def test_unstable_head_pose_reduces_yawn_confidence(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 30.0)
+        monkeypatch.setattr(utils, "get_blinking_ratio", lambda eye_points, landmarks: 1.0)
+        monkeypatch.setattr(utils, "get_gaze_ratio", lambda frame, gray, eye_points, landmarks: 1.0)
+        poses = iter([(0.0, 0.0, 0.0), (18.0, -18.0, 8.0), (-18.0, 18.0, -8.0)])
+        monkeypatch.setattr(utils, "get_head_pose", lambda shape_np: next(poses))
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+        yawn_history = collections.deque(maxlen=12)
+        yawn_state = {"state": "NO_YAWN"}
+
+        results = [
+            utils.analyze_face_attention_with_models(
+                base_face_analysis_data(
+                    frame_time_seconds=10.0 + index * 0.4,
+                    yawn_history=yawn_history,
+                    yawn_state=yawn_state,
+                )
+            )
+            for index in range(3)
+        ]
+
+        assert results[-1]["analysis"]["yawning"] is False
+        assert results[-1]["metrics"]["head_stability"] < 0.55
+
+    def test_repeated_yawns_can_confirm_again_after_recovery(self, monkeypatch):
+        utils = load_face_utils_v2(monkeypatch)
+        self._configure_lightweight_analysis(monkeypatch, utils)
+        distances = iter([30.0, 31.0, 32.0, 4.0, 4.0, 30.0, 31.0, 32.0])
+        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: next(distances))
+        monkeypatch.setattr(
+            utils,
+            "face_detection",
+            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
+        )
+        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
+        yawn_history = collections.deque(maxlen=12)
+        yawn_state = {"state": "NO_YAWN"}
+
+        results = [
+            utils.analyze_face_attention_with_models(
+                base_face_analysis_data(
+                    frame_time_seconds=10.0 + index * 0.4,
+                    yawn_history=yawn_history,
+                    yawn_state=yawn_state,
+                )
+            )
+            for index in range(8)
+        ]
+
+        confirmed = [result["analysis"]["yawn_state"] for result in results]
+        assert confirmed[2] == "CONFIRMED_YAWN"
+        assert confirmed[4] == "NO_YAWN"
+        assert confirmed[7] == "CONFIRMED_YAWN"
+
 
 class TestEyeClosedDetection:
     def _configure_lightweight_analysis(self, monkeypatch, utils, blink_ratio=1.0):

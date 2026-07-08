@@ -48,6 +48,10 @@ READING_MAX_FREQ = 1.5
 YAWN_THRESH = 15.0
 YAWN_FACE_HEIGHT_RATIO = 0.08
 YAWN_CONSECUTIVE_FRAME_THRESHOLD = 3
+YAWN_CONFIDENCE_THRESHOLD = 0.80
+YAWN_MIN_DURATION_SECONDS = 1.0
+YAWN_RATIO_START = 0.08
+YAWN_RATIO_STRONG = 0.18
 BLINK_RATIO_THRESHOLD = 4.75
 EYE_OPEN_PROBABILITY_THRESHOLD = 0.3
 EAR_CLOSED_THRESHOLD = 0.2
@@ -232,6 +236,7 @@ def build_ui_feedback(
         "left_eye_closed": bool(left_eye_closed),
         "right_eye_closed": bool(right_eye_closed),
         "yawning": bool(analysis.get("yawning", False)),
+        "possible_yawn": analysis.get("yawn_state") == "POSSIBLE_YAWN",
         "drowsy": analysis.get("not_drowsy") is False,
         "looking_left": gaze_state == "LEFT",
         "looking_right": gaze_state == "RIGHT",
@@ -304,6 +309,14 @@ def build_ui_feedback(
             "Drowsiness Alert",
             "Yawning detected. Please take a short break and refocus.",
         )
+    elif flags["possible_yawn"]:
+        reason, title, message = (
+            "possible_yawn",
+            "Checking Yawn",
+            "Possible yawn detected. Still checking before showing an alert.",
+        )
+        severity = "info"
+        flags["should_show_alert"] = False
     elif flags["head_moved"]:
         reason, title, message = (
             "head_moved",
@@ -371,7 +384,7 @@ def build_ui_feedback(
             "Low concentration detected. Take a moment to refocus.",
         )
 
-    if reason != "focused":
+    if reason not in {"focused", "possible_yawn"}:
         severity = "warning"
 
     return {
@@ -444,6 +457,215 @@ def _downgrade_stale_fallback(validation):
         0.45,
     )
     return validation
+
+
+def _clamp(value, low=0.0, high=1.0):
+    return max(low, min(high, float(value)))
+
+
+def _yawn_state_value(yawn_state):
+    if isinstance(yawn_state, dict):
+        return yawn_state.get("state", "NO_YAWN")
+    return "NO_YAWN"
+
+
+def _latest_consecutive_candidates(yawn_history):
+    count = 0
+    for sample in reversed(yawn_history):
+        if sample.get("raw_candidate"):
+            count += 1
+        else:
+            break
+    return count
+
+
+def _estimate_face_stability(yawn_history, face_box):
+    if not yawn_history:
+        return 1.0
+    previous = yawn_history[-1].get("face_box")
+    if not previous:
+        return 0.8
+    px, py, pw, ph = previous
+    x, y, w, h = face_box
+    if min(pw, ph, w, h) <= 0:
+        return 0.5
+    previous_center = (px + pw / 2.0, py + ph / 2.0)
+    center = (x + w / 2.0, y + h / 2.0)
+    center_shift = hypot(center[0] - previous_center[0], center[1] - previous_center[1])
+    normalized_shift = center_shift / max(h, ph, 1.0)
+    size_change = abs(h - ph) / max(h, ph, 1.0)
+    instability = normalized_shift + size_change
+    return _clamp(1.0 - (instability / 0.35))
+
+
+def _estimate_head_stability(yawn_history, pitch, yaw, roll):
+    if not yawn_history:
+        return 1.0
+    previous = yawn_history[-1]
+    previous_pose = previous.get("head_pose")
+    if not previous_pose:
+        return 0.9
+    pp, py, pr = previous_pose
+    motion = abs(pitch - pp) + abs(yaw - py) + abs(roll - pr)
+    return _clamp(1.0 - (motion / 30.0))
+
+
+def _estimate_talking_probability(yawn_history):
+    samples = list(yawn_history)[-6:]
+    if len(samples) < 4:
+        return 0.0
+    ratios = [float(sample.get("mouth_open_ratio", 0.0)) for sample in samples]
+    deltas = [ratios[i] - ratios[i - 1] for i in range(1, len(ratios))]
+    sign_changes = sum(
+        1
+        for i in range(1, len(deltas))
+        if deltas[i] * deltas[i - 1] < 0
+    )
+    amplitude = max(ratios) - min(ratios)
+    avg_ratio = sum(ratios) / len(ratios)
+    oscillation_score = _clamp(sign_changes / 3.0)
+    amplitude_score = _clamp(amplitude / 0.08)
+    small_mouth_score = 1.0 - _clamp((avg_ratio - 0.12) / 0.08)
+    return _clamp(0.45 * oscillation_score + 0.35 * amplitude_score + 0.20 * small_mouth_score)
+
+
+def update_yawn_state(
+    *,
+    yawn_history,
+    yawn_state,
+    timestamp_seconds,
+    mouth_open_ratio,
+    yawn_distance,
+    yawn_threshold,
+    face_box,
+    pitch,
+    yaw,
+    roll,
+    eyes_clearly_open,
+    head_pose_ok,
+    low_light,
+    blur_severity,
+    tracking_confidence,
+):
+    if getattr(yawn_history, "maxlen", None) is None:
+        yawn_history = deque(yawn_history, maxlen=12)
+    if not isinstance(yawn_state, dict):
+        yawn_state = {}
+
+    mouth_score = _clamp((mouth_open_ratio - YAWN_RATIO_START) / (YAWN_RATIO_STRONG - YAWN_RATIO_START))
+    raw_candidate = bool(
+        yawn_distance > yawn_threshold
+        and mouth_open_ratio >= YAWN_RATIO_START
+        and mouth_score > 0.0
+    )
+    face_stability = _estimate_face_stability(yawn_history, face_box)
+    head_stability = _estimate_head_stability(yawn_history, pitch, yaw, roll)
+
+    sample = {
+        "timestamp": float(timestamp_seconds),
+        "mouth_open_ratio": float(mouth_open_ratio),
+        "raw_candidate": raw_candidate,
+        "face_box": tuple(float(v) for v in face_box),
+        "head_pose": (float(pitch), float(yaw), float(roll)),
+    }
+    yawn_history.append(sample)
+
+    consecutive_yawn_frames = _latest_consecutive_candidates(yawn_history)
+    previous_state = _yawn_state_value(yawn_state)
+    if raw_candidate and previous_state in {"NO_YAWN", "RECOVERY"}:
+        yawn_state["possible_started_at"] = float(timestamp_seconds)
+        current_state = "POSSIBLE_YAWN"
+    elif raw_candidate:
+        current_state = previous_state if previous_state in {"POSSIBLE_YAWN", "CONFIRMED_YAWN"} else "POSSIBLE_YAWN"
+    elif previous_state == "CONFIRMED_YAWN":
+        current_state = "RECOVERY"
+        yawn_state["recovery_started_at"] = float(timestamp_seconds)
+    elif previous_state == "RECOVERY" and consecutive_yawn_frames == 0:
+        current_state = "NO_YAWN"
+        yawn_state.pop("possible_started_at", None)
+    else:
+        current_state = "NO_YAWN"
+        yawn_state.pop("possible_started_at", None)
+
+    possible_started_at = yawn_state.get("possible_started_at", float(timestamp_seconds))
+    yawn_duration_seconds = (
+        max(float(timestamp_seconds) - float(possible_started_at), 0.0)
+        if current_state in {"POSSIBLE_YAWN", "CONFIRMED_YAWN"}
+        else 0.0
+    )
+    duration_score = _clamp(yawn_duration_seconds / YAWN_MIN_DURATION_SECONDS)
+    consecutive_score = _clamp(consecutive_yawn_frames / float(YAWN_CONSECUTIVE_FRAME_THRESHOLD))
+
+    talking_probability = _estimate_talking_probability(yawn_history)
+    quality_penalty = 0.0
+    if low_light:
+        quality_penalty += 0.25
+    if blur_severity == "borderline":
+        quality_penalty += 0.10
+    elif blur_severity == "blurry":
+        quality_penalty += 0.25
+    if tracking_confidence < 0.7:
+        quality_penalty += 0.12
+
+    head_penalty = (1.0 - head_stability) * 0.20
+    face_penalty = (1.0 - face_stability) * 0.20
+    talking_penalty = talking_probability * 0.35
+    eye_penalty = 0.05 if eyes_clearly_open else 0.0
+    head_pose_penalty = 0.10 if not head_pose_ok else 0.0
+
+    yawn_confidence = _clamp(
+        0.50 * mouth_score
+        + 0.25 * consecutive_score
+        + 0.15 * face_stability
+        + 0.10 * head_stability
+        + 0.10 * duration_score
+        - talking_penalty
+        - eye_penalty
+        - head_penalty
+        - face_penalty
+        - head_pose_penalty
+        - quality_penalty
+    )
+
+    temporally_ready = (
+        consecutive_yawn_frames >= YAWN_CONSECUTIVE_FRAME_THRESHOLD
+        or yawn_duration_seconds >= YAWN_MIN_DURATION_SECONDS
+    )
+    yawn_reliable = bool(
+        raw_candidate
+        and temporally_ready
+        and yawn_confidence >= YAWN_CONFIDENCE_THRESHOLD
+        and talking_probability < 0.55
+        and face_stability >= 0.55
+        and head_stability >= 0.55
+    )
+    if current_state == "POSSIBLE_YAWN" and yawn_reliable:
+        current_state = "CONFIRMED_YAWN"
+        yawn_state["confirmed_started_at"] = float(timestamp_seconds)
+    elif current_state == "CONFIRMED_YAWN" and not raw_candidate:
+        current_state = "RECOVERY"
+        yawn_state["recovery_started_at"] = float(timestamp_seconds)
+    elif current_state == "CONFIRMED_YAWN" and yawn_confidence < 0.45:
+        current_state = "RECOVERY"
+        yawn_state["recovery_started_at"] = float(timestamp_seconds)
+
+    yawn_state["state"] = current_state
+    yawn_state["last_confidence"] = round(yawn_confidence, 4)
+    yawn_state["consecutive_yawn_frames"] = consecutive_yawn_frames
+
+    return {
+        "raw_yawn_candidate": raw_candidate,
+        "yawning": current_state == "CONFIRMED_YAWN",
+        "yawn_reliable": current_state == "CONFIRMED_YAWN" and yawn_confidence >= YAWN_CONFIDENCE_THRESHOLD,
+        "yawn_confidence": round(yawn_confidence, 4),
+        "yawn_state": current_state,
+        "yawn_duration_ms": int(round(yawn_duration_seconds * 1000)),
+        "consecutive_yawn_frames": consecutive_yawn_frames,
+        "talking_probability": round(talking_probability, 4),
+        "mouth_open_ratio": round(mouth_open_ratio, 4),
+        "face_stability": round(face_stability, 4),
+        "head_stability": round(head_stability, 4),
+    }
 
 
 def validate_client_face_box_for_fallback(
@@ -757,9 +979,11 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         # Extract state passed from consumer
         gaze_history = face_data.get("gaze_history") if face_data.get("gaze_history") is not None else deque()
         blink_history = face_data.get("blink_history") if face_data.get("blink_history") is not None else deque()
-        yawn_history = face_data.get("yawn_history") if face_data.get("yawn_history") is not None else deque(maxlen=3)
+        yawn_history = face_data.get("yawn_history") if face_data.get("yawn_history") is not None else deque(maxlen=12)
+        yawn_state = face_data.get("yawn_state") if isinstance(face_data.get("yawn_state"), dict) else {}
         score_history = face_data.get("score_history") if face_data.get("score_history") is not None else deque(maxlen=5)
         inattention_start = face_data.get("inattention_start")
+        frame_quality = face_data.get("frame_quality", {}) or {}
 
         settings = {
             "gaze_low": custom_settings.get("gaze_low", GAZE_LOW),
@@ -1286,14 +1510,10 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             float(client_h or 0) * settings["yawn_face_height_ratio"],
         )
         server_face_height = float(fh or client_h or 0)
-        yawn_face_height_ratio = (
+        mouth_open_ratio = (
             yawn_distance / server_face_height
             if server_face_height > 0
             else 0.0
-        )
-        raw_yawn_candidate = bool(
-            yawn_distance > yawn_threshold
-            and yawn_face_height_ratio > settings["yawn_face_height_ratio"]
         )
 
         # Validate gaze and head pose
@@ -1302,25 +1522,37 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             -settings["head_limit"] <= pitch <= settings["head_limit"]
             and -settings["head_limit"] <= yaw <= settings["head_limit"]
         )
-        if getattr(yawn_history, "maxlen", None) is None:
-            yawn_history = deque(yawn_history, maxlen=YAWN_CONSECUTIVE_FRAME_THRESHOLD)
-        yawn_history.append(raw_yawn_candidate)
-        yawn_reliable = (
-            len(yawn_history) >= YAWN_CONSECUTIVE_FRAME_THRESHOLD
-            and all(list(yawn_history)[-YAWN_CONSECUTIVE_FRAME_THRESHOLD:])
-        )
         eyes_clearly_open = (
             left_eye_open_probability is not None
             and right_eye_open_probability is not None
-            and left_eye_open_probability >= 0.75
-            and right_eye_open_probability >= 0.75
+            and left_eye_open_probability >= 0.8
+            and right_eye_open_probability >= 0.8
         )
-        yawning = bool(yawn_reliable)
-        yawn_confidence = (
-            min(1.0, yawn_face_height_ratio / max(settings["yawn_face_height_ratio"], 0.001))
-            if raw_yawn_candidate
-            else 0.0
+        yawn_debug = update_yawn_state(
+            yawn_history=yawn_history,
+            yawn_state=yawn_state,
+            timestamp_seconds=frame_time_seconds,
+            mouth_open_ratio=mouth_open_ratio,
+            yawn_distance=yawn_distance,
+            yawn_threshold=yawn_threshold,
+            face_box=(x, y, fw, fh),
+            pitch=pitch,
+            yaw=yaw,
+            roll=roll,
+            eyes_clearly_open=eyes_clearly_open,
+            head_pose_ok=flags.head_pose_ok,
+            low_light=low_light or bool(frame_quality.get("low_light", False)),
+            blur_severity=frame_quality.get("blur_severity", "clear"),
+            tracking_confidence=(
+                fallback_validation.get("fallback_confidence", SERVER_FACE_CONFIDENCE)
+                if fallback_used
+                else SERVER_FACE_CONFIDENCE
+            ),
         )
+        raw_yawn_candidate = yawn_debug["raw_yawn_candidate"]
+        yawning = yawn_debug["yawning"]
+        yawn_reliable = yawn_debug["yawn_reliable"]
+        yawn_confidence = yawn_debug["yawn_confidence"]
 
         # Drowsiness detection
         if yawning or eyes_closed:
@@ -1345,6 +1577,11 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "raw_yawn_candidate": raw_yawn_candidate,
             "yawn_reliable": yawn_reliable,
             "yawn_confidence": round(yawn_confidence, 4),
+            "yawn_state": yawn_debug["yawn_state"],
+            "yawn_duration_ms": yawn_debug["yawn_duration_ms"],
+            "consecutive_yawn_frames": yawn_debug["consecutive_yawn_frames"],
+            "talking_probability": yawn_debug["talking_probability"],
+            "mouth_open_ratio": yawn_debug["mouth_open_ratio"],
             "gaze_state": gaze_state,
         }
         fallback_analysis = {
@@ -1478,10 +1715,17 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "blink_ratio": round(blink_ratio, 4),
             "yawn_distance": round(yawn_distance, 4),
             "yawn_threshold": round(yawn_threshold, 4),
-            "yawn_face_height_ratio": round(yawn_face_height_ratio, 4),
+            "yawn_face_height_ratio": round(mouth_open_ratio, 4),
+            "mouth_open_ratio": yawn_debug["mouth_open_ratio"],
             "raw_yawn_candidate": raw_yawn_candidate,
             "yawn_reliable": yawn_reliable,
             "yawn_confidence": round(yawn_confidence, 4),
+            "yawn_state": yawn_debug["yawn_state"],
+            "yawn_duration_ms": yawn_debug["yawn_duration_ms"],
+            "consecutive_yawn_frames": yawn_debug["consecutive_yawn_frames"],
+            "talking_probability": yawn_debug["talking_probability"],
+            "face_stability": yawn_debug["face_stability"],
+            "head_stability": yawn_debug["head_stability"],
             "drowsy_state": drowsy_state,
             "faces_count": faces_count,
             "haar_faces_count": haar_faces_count,

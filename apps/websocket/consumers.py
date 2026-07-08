@@ -99,7 +99,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.user_id = None
         self.gaze_history = collections.deque()
         self.blink_history = collections.deque()
-        self.yawn_history = collections.deque(maxlen=3)
+        self.yawn_history = collections.deque(maxlen=12)
+        self.yawn_state = {'state': 'NO_YAWN'}
         self.score_history = collections.deque(maxlen=5)
         self.inattention_start = None
         self.frame_count = 0
@@ -133,6 +134,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.gaze_history.clear()
         self.blink_history.clear()
         self.yawn_history.clear()
+        self.yawn_state = {'state': 'NO_YAWN'}
         self.score_history.clear()
         self.inattention_start = None
         self.frame_count = 0
@@ -361,12 +363,14 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'gaze_history': self.gaze_history,
                 'blink_history': self.blink_history,
                 'yawn_history': self.yawn_history,
+                'yawn_state': self.yawn_state,
                 'score_history': self.score_history,
                 'inattention_start': self.inattention_start,
                 'mode': mode,
                 'pdf_is_visible': pdf_is_visible,
                 'is_assessment': is_assessment,
                 'eye': extract_eye_data(data),
+                'frame_quality': quality,
                 'last_attention_state': self.last_attention_state,
             }
 
