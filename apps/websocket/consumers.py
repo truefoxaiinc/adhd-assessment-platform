@@ -11,7 +11,6 @@ import uuid
 from datetime import datetime
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from django.conf import settings
 from apps.websocket.services.face_analysis_service import analyze_face_attention
 from apps.websocket.services.rate_limit_service import WebSocketRateLimiter
 
@@ -49,52 +48,6 @@ def extract_eye_data(payload):
         if key in face_data and key not in eye_data:
             eye_data[key] = face_data.get(key)
     return eye_data
-
-
-def _box_center(x, y, width, height):
-    if width is None or height is None or width <= 0 or height <= 0:
-        return None
-    return (round(x + width / 2.0, 2), round(y + height / 2.0, 2))
-
-
-def _center_distance(center_a, center_b):
-    if center_a is None or center_b is None:
-        return None
-    return round(((center_a[0] - center_b[0]) ** 2 + (center_a[1] - center_b[1]) ** 2) ** 0.5, 2)
-
-
-def _box_iou(box_a, box_b):
-    if box_a is None or box_b is None:
-        return None
-    ax, ay, aw, ah = box_a
-    bx, by, bw, bh = box_b
-    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
-        return None
-
-    x1 = max(ax, bx)
-    y1 = max(ay, by)
-    x2 = min(ax + aw, bx + bw)
-    y2 = min(ay + ah, by + bh)
-    intersection = max(0, x2 - x1) * max(0, y2 - y1)
-    union = aw * ah + bw * bh - intersection
-    if union <= 0:
-        return None
-    return round(intersection / float(union), 4)
-
-
-def _inside_frame(x, y, width, height, frame_width, frame_height):
-    return (
-        width is not None
-        and height is not None
-        and frame_width is not None
-        and frame_height is not None
-        and width > 0
-        and height > 0
-        and x >= 0
-        and y >= 0
-        and x + width <= frame_width
-        and y + height <= frame_height
-    )
 
 
 class FaceDetectionConsumer(AsyncWebsocketConsumer):
@@ -221,19 +174,11 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         try:
             if not await self._allow_message():
-                logger.warning(
-                    "WebSocket rate limit exceeded",
-                    extra={"user_id": self.user_id, "session_id": self.session_id},
-                )
                 await self.send_error()
                 await self.close(code=self.CLOSE_CODE_RATE_LIMITED)
                 return
 
             if self._message_too_large(text_data):
-                logger.warning(
-                    "WebSocket message payload too large",
-                    extra={"user_id": self.user_id, "session_id": self.session_id},
-                )
                 await self.send_error()
                 await self.close(code=self.CLOSE_CODE_POLICY_VIOLATION)
                 return
@@ -259,27 +204,11 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'timestamp': datetime.now().isoformat()
                 }))
             else:
-                logger.warning(
-                    "Unknown WebSocket message type",
-                    extra={
-                        "user_id": self.user_id,
-                        "session_id": self.session_id,
-                        "message_type": message_type,
-                    },
-                )
                 await self.send_error()
 
         except json.JSONDecodeError:
-            logger.exception(
-                "Invalid WebSocket JSON payload",
-                extra={"user_id": self.user_id, "session_id": self.session_id},
-            )
             await self.send_error()
         except Exception:
-            logger.exception(
-                "Unexpected WebSocket receive error",
-                extra={"user_id": self.user_id, "session_id": self.session_id},
-            )
             await self.send_error()
 
     async def handle_endcall(self, data):
@@ -319,10 +248,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             await self.close()
             
         except Exception:
-            logger.exception(
-                "Endcall processing failed",
-                extra={"user_id": self.user_id, "session_id": self.session_id},
-            )
             await self.send_error()
 
     # 🔥 NEW: Async wrapper for sync DB operation (FIXES SynchronousOnlyOperation)
@@ -360,34 +285,18 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             pdf_is_visible = data.get('pdf_is_visible', False)
 
             if not face_data:
-                logger.warning(
-                    "Face validation request missing face data",
-                    extra={"user_id": self.user_id, "session_id": self.session_id},
-                )
                 await self.send_error()
                 return
 
             if not frame_base64:
-                logger.warning(
-                    "Face validation request missing frame_base64",
-                    extra={"user_id": self.user_id, "session_id": self.session_id},
-                )
                 await self.send_error()
                 return
 
             if not isinstance(frame_base64, str):
-                logger.warning(
-                    "Face validation request frame_base64 is not a string",
-                    extra={"user_id": self.user_id, "session_id": self.session_id},
-                )
                 await self.send_error()
                 return
 
             if len(frame_base64) > self.MAX_FRAME_BASE64_CHARS:
-                logger.warning(
-                    "Face validation frame payload too large",
-                    extra={"user_id": self.user_id, "session_id": self.session_id},
-                )
                 await self.send_error()
                 await self.close(code=self.CLOSE_CODE_POLICY_VIOLATION)
                 return
@@ -407,10 +316,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             try:
                 frame_bytes = base64.b64decode(frame_base64, validate=True)
             except (binascii.Error, ValueError):
-                logger.exception(
-                    "Invalid frame_base64 data",
-                    extra={"user_id": self.user_id, "session_id": self.session_id},
-                )
                 await self.send_error()
                 return
 
@@ -418,25 +323,11 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
             if frame_bgr is None:
-                logger.warning(
-                    "OpenCV could not decode frame_base64 data",
-                    extra={"user_id": self.user_id, "session_id": self.session_id},
-                )
                 await self.send_error()
                 return
 
             if self._decoded_frame_too_large(frame_bgr):
                 frame_height, frame_width = frame_bgr.shape[:2]
-                logger.warning(
-                    "Decoded frame exceeds size limits",
-                    extra={
-                        "user_id": self.user_id,
-                        "session_id": self.session_id,
-                        "frame_width": int(frame_width),
-                        "frame_height": int(frame_height),
-                        "frame_pixels": int(frame_width * frame_height),
-                    },
-                )
                 await self.send_frame_too_large_error()
                 return
 
@@ -455,8 +346,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'frame_id': request_frame_id,
                 'frame_width': frame_data.get('width', self.frame_width),
                 'frame_height': frame_data.get('height', self.frame_height),
-                'decoded_frame_width': frame_bgr.shape[1],
-                'decoded_frame_height': frame_bgr.shape[0],
                 'frame_bgr': frame_bgr,
                 'expected_fps': 30,
                 'frame_time_seconds': frame_time_seconds,
@@ -480,13 +369,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             self._apply_frame_quality(result, quality)
             self._apply_temporal_smoothing(result)
             self._apply_ui_alert_stability(result)
-            self._log_mobile_frame_debug(
-                result=result,
-                face_data=face_data,
-                frame_data=frame_data,
-                request_frame_id=request_frame_id,
-                frame_bgr=frame_bgr,
-            )
 
             if 'inattention_start' in result:
                 self.inattention_start = result['inattention_start']
@@ -563,13 +445,13 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 }
 
             self.last_response_data = response_data
+            logger.warning(
+                "websocket_ui_message: %s",
+                response_data['result'].get('ui_message', {}),
+            )
             await self.send(text_data=json.dumps(response_data, default=str))
 
         except Exception:
-            logger.exception(
-                "Face validation failed",
-                extra={"user_id": self.user_id, "session_id": self.session_id},
-            )
             await self.send_error()
         finally:
             if processing_started:
@@ -607,93 +489,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             frame_width > self.MAX_DECODED_FRAME_WIDTH
             or frame_height > self.MAX_DECODED_FRAME_HEIGHT
             or frame_pixels > self.MAX_DECODED_FRAME_PIXELS
-        )
-
-    def _log_mobile_frame_debug(self, *, result, face_data, frame_data, request_frame_id, frame_bgr):
-        if not getattr(settings, 'DEBUG', False) or not logger.isEnabledFor(logging.DEBUG):
-            return
-
-        payload_frame_width = frame_data.get('width', self.frame_width)
-        payload_frame_height = frame_data.get('height', self.frame_height)
-        decoded_frame_height, decoded_frame_width = frame_bgr.shape[:2]
-        face_position = result.get('face_position', {}) or {}
-        metrics = result.get('metrics', {}) or {}
-        analysis = result.get('analysis', {}) or {}
-        quality = result.get('quality', {}) or {}
-
-        client_x = face_data.get('x', face_position.get('client_x', 0))
-        client_y = face_data.get('y', face_position.get('client_y', 0))
-        client_w = face_data.get('width', face_position.get('client_width', 0))
-        client_h = face_data.get('height', face_position.get('client_height', 0))
-        server_x = face_position.get('server_x')
-        server_y = face_position.get('server_y')
-        server_w = face_position.get('server_width')
-        server_h = face_position.get('server_height')
-
-        client_box = (client_x, client_y, client_w, client_h)
-        server_box = (
-            (server_x, server_y, server_w, server_h)
-            if None not in (server_x, server_y, server_w, server_h)
-            else None
-        )
-        client_center = _box_center(client_x, client_y, client_w, client_h)
-        server_center = _box_center(server_x, server_y, server_w, server_h) if server_box else None
-
-        logger.debug(
-            "websocket_mobile_frame_debug",
-            extra={
-                "session_id": self.session_id,
-                "user_id": self.user_id,
-                "frame_id": request_frame_id,
-                "payload_frame_width": payload_frame_width,
-                "payload_frame_height": payload_frame_height,
-                "decoded_frame_width": decoded_frame_width,
-                "decoded_frame_height": decoded_frame_height,
-                "frame_dimension_match": (
-                    payload_frame_width == decoded_frame_width
-                    and payload_frame_height == decoded_frame_height
-                ),
-                "client_face_x": client_x,
-                "client_face_y": client_y,
-                "client_face_width": client_w,
-                "client_face_height": client_h,
-                "client_box_inside_frame": _inside_frame(
-                    client_x,
-                    client_y,
-                    client_w,
-                    client_h,
-                    decoded_frame_width,
-                    decoded_frame_height,
-                ),
-                "server_face_x": server_x,
-                "server_face_y": server_y,
-                "server_face_width": server_w,
-                "server_face_height": server_h,
-                "client_server_iou": _box_iou(client_box, server_box),
-                "client_server_center_distance": _center_distance(client_center, server_center),
-                "haar_faces_count": metrics.get('haar_faces_count'),
-                "dlib_faces_count": metrics.get('dlib_faces_count', metrics.get('faces_count')),
-                "fallback_used": metrics.get('fallback_used', analysis.get('fallback_used')),
-                "left_eye_open_probability": metrics.get('left_eye_open_probability'),
-                "right_eye_open_probability": metrics.get('right_eye_open_probability'),
-                "eyes_closed": analysis.get('eyes_closed', metrics.get('eyes_closed')),
-                "eye_decision_reason": metrics.get('eye_decision_reason'),
-                "gaze_ratio": metrics.get('gaze_ratio'),
-                "gaze_state": analysis.get('gaze_state') or metrics.get('gaze_state'),
-                "gaze_reliable": analysis.get('gaze_reliable'),
-                "head_pose_pitch": metrics.get('pitch'),
-                "head_pose_yaw": metrics.get('yaw'),
-                "head_pose_roll": metrics.get('roll'),
-                "yawn_distance": metrics.get('yawn_distance'),
-                "yawning": analysis.get('yawning', metrics.get('yawning')),
-                "blur_score": quality.get('blur_score', metrics.get('blur_score')),
-                "brightness_score": quality.get('brightness_score', metrics.get('brightness_score')),
-                "contrast_score": quality.get('contrast_score', metrics.get('contrast_score')),
-                "primary_attention_reason": (
-                    (result.get('ui_message') or {}).get('reason')
-                    or result.get('message')
-                ),
-            },
         )
 
     def _assess_frame_quality(self, frame_bgr):
@@ -960,10 +755,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'timestamp': datetime.now().isoformat()
             }))
         except Exception:
-            logger.exception(
-                "Settings update failed",
-                extra={"user_id": self.user_id, "session_id": self.session_id},
-            )
             await self.send_error()
 
     async def handle_get_guidelines(self):
@@ -993,10 +784,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'timestamp': datetime.now().isoformat()
             }))
         except Exception:
-            logger.exception(
-                "Guidelines retrieval failed",
-                extra={"user_id": self.user_id, "session_id": self.session_id},
-            )
             await self.send_error()
 
     def _build_session_summary(self, metrics):
@@ -1093,10 +880,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'timestamp': datetime.now().isoformat()
             }))
         except Exception:
-            logger.exception(
-                "Stats retrieval failed",
-                extra={"user_id": self.user_id, "session_id": self.session_id},
-            )
             await self.send_error()
 
     async def send_error(self, error_code=None, message=None):

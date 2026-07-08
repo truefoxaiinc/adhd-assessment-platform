@@ -1,6 +1,5 @@
 import os
 from celery import Celery
-import logging
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'project_adhd.settings')
 
@@ -18,4 +17,4 @@ app.autodiscover_tasks()
 
 @app.task(bind=True, ignore_result=True)
 def debug_task(self):
-    logging.error(f'Request: {self.request!r}')
+    pass

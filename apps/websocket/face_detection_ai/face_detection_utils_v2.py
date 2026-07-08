@@ -10,10 +10,8 @@ import time
 from math import hypot
 from imutils import face_utils
 
-import logging
 from django.conf import settings as django_settings
 
-logger = logging.getLogger(__name__)
 SAFE_ANALYSIS_ERROR_MESSAGE = "Unable to process frame safely"
 
 # --------------------------
@@ -22,14 +20,6 @@ SAFE_ANALYSIS_ERROR_MESSAGE = "Unable to process frame safely"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_DIR)))
 FILES_DIR = os.path.join(PROJECT_ROOT, "files")
-
-logger.info(f"SCRIPT_DIR: {SCRIPT_DIR}")
-logger.info(f"PROJECT_ROOT: {PROJECT_ROOT}")
-logger.info(f"FILES_DIR: {FILES_DIR}")
-logger.info(
-    f"PREDICTOR exists: "
-    f"{os.path.exists(os.path.join(FILES_DIR, 'shape_predictor_68_face_landmarks.dat'))}"
-)
 
 DETECTION_MODEL_PATH = os.path.join(FILES_DIR, "haarcascade_frontalface_default.xml")
 PREDICTOR_PATH = os.path.join(FILES_DIR, "shape_predictor_68_face_landmarks.dat")
@@ -1428,7 +1418,6 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         }
     
     except Exception:
-        logger.exception("Face attention analysis failed")
         analysis = build_analysis(AnalysisFlags())
         ui_feedback = build_ui_feedback(
             face_detected=False,

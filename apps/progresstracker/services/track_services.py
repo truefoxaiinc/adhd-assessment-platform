@@ -2,9 +2,6 @@ from apps.progresstracker.models import UserAssessmentDetails, ProgressTracker
 from datetime import datetime, time as datetime_time, timedelta
 from django.utils import timezone
 
-import logging
-logger = logging.getLogger(__name__)
-
 class ProgressTrackerActions:
 
     @staticmethod
@@ -35,8 +32,7 @@ class ProgressTrackerActions:
                 return list(range(1, unlocked_until + 1))
             return [1]
             
-        except Exception as e:
-            logger.error(f"Error fetching available file days: {str(e)}")
+        except Exception:
             return [1]
 
     @staticmethod
@@ -84,6 +80,5 @@ class ProgressTrackerActions:
                     started_on=timezone.now()
                 )
             return True
-        except Exception as e:
-            logger.exception("Error updating learning progress")
+        except Exception:
             return False
