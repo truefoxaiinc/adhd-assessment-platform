@@ -108,6 +108,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.inference_running = False
         self.bad_quality_frame_count = 0
         self.temporal_window = collections.deque(maxlen=self.TEMPORAL_WINDOW_SIZE)
+        self.yawn_evidence_window = collections.deque(maxlen=self.TEMPORAL_WINDOW_SIZE)
+        self.face_missing_frame_count = 0
         self.ui_warning_reason = None
         self.ui_warning_count = 0
         self.rate_limiter = WebSocketRateLimiter(
@@ -125,7 +127,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         
         self.session_id = str(uuid.uuid4())[:8]
         self.session_started_at = time.time()
-        self.session_started_monotonic = self._now()
+        self.session_started_monotonic = time.monotonic()
         self.session_metrics = collections.deque(maxlen=self.MAX_SESSION_METRIC_SAMPLES)
         self.session_metric_totals = self._new_metric_totals()
         self.gaze_history.clear()
@@ -140,6 +142,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.inference_running = False
         self.bad_quality_frame_count = 0
         self.temporal_window = collections.deque(maxlen=self.TEMPORAL_WINDOW_SIZE)
+        self.yawn_evidence_window = collections.deque(maxlen=self.TEMPORAL_WINDOW_SIZE)
+        self.face_missing_frame_count = 0
         self.ui_warning_reason = None
         self.ui_warning_count = 0
         self.rate_limiter.clear()
@@ -653,9 +657,59 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 analysis.get('head_pose_ok', True),
             )
         )
+        face_detected = bool(result.get('face_detected', False))
+        if face_detected:
+            self.face_missing_frame_count = 0
+        else:
+            self.face_missing_frame_count += 1
+
+        yawn_evidence = bool(
+            analysis.get('yawn_evidence', analysis.get('yawning', False))
+            or metrics.get('yawn_evidence', False)
+        )
+        if yawn_evidence:
+            now = self._now()
+            self.yawn_evidence_window.append(now)
+        else:
+            self.yawn_evidence_window.clear()
+
+        yawn_evidence_count = len(self.yawn_evidence_window)
+        yawn_duration = (
+            self.yawn_evidence_window[-1] - self.yawn_evidence_window[0]
+            if yawn_evidence_count >= 2 else
+            0.0
+        )
+        yawn_reliable = (
+            yawn_evidence
+            and (
+                yawn_evidence_count >= self.TEMPORAL_BAD_FRAME_THRESHOLD
+                or yawn_duration >= 1.0
+            )
+        )
+        yawn_confidence = min(1.0, yawn_evidence_count / float(self.TEMPORAL_BAD_FRAME_THRESHOLD))
+        analysis['yawning'] = bool(yawn_reliable)
+        analysis['yawn_reliable'] = bool(yawn_reliable)
+        analysis['yawn_confidence'] = round(yawn_confidence, 2)
+        metrics['yawning'] = bool(yawn_reliable)
+        metrics['yawn_reliable'] = bool(yawn_reliable)
+        metrics['yawn_confidence'] = round(yawn_confidence, 2)
+        if yawn_reliable:
+            metrics['drowsy_state'] = max(float(metrics.get('drowsy_state', 0.2) or 0.2), 0.8)
+
+        face_missing_reliable = (
+            not face_detected
+            and self.face_missing_frame_count >= self.TEMPORAL_BAD_FRAME_THRESHOLD
+        )
+        analysis['face_detection_reliable'] = bool(face_detected or face_missing_reliable)
+        analysis['face_missing_frame_count'] = self.face_missing_frame_count
+        metrics['face_detection_reliable'] = analysis['face_detection_reliable']
+        metrics['face_missing_frame_count'] = self.face_missing_frame_count
+
         frame_state = {
-            'face_detected': bool(result.get('face_detected', False)),
+            'face_detected': face_detected,
+            'face_missing_reliable': face_missing_reliable,
             'eyes_open': eyes_open,
+            'yawning': bool(yawn_reliable),
             'gaze_in_range': bool(analysis.get('gaze_in_range', True)),
             'gaze_state': analysis.get('gaze_state') or metrics.get('gaze_state') or 'CENTER',
             'gaze_reliable': gaze_reliable,
@@ -667,19 +721,20 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         clear_side_gaze = frame_state['gaze_state'] in ['LEFT', 'RIGHT']
         gaze_is_bad = (
             frame_state['gaze_reliable']
-            and clear_side_gaze
             and not frame_state['gaze_in_range']
         )
         analysis['clear_side_gaze'] = clear_side_gaze
         frame_state['bad'] = (
-            not frame_state['face_detected']
+            frame_state['face_missing_reliable']
             or not frame_state['eyes_open']
+            or frame_state['yawning']
             or gaze_is_bad
             or not frame_state['head_pose_valid']
             or frame_state['blurry']
             or frame_state['low_light']
             or frame_state['confidence'] < 0.6
         )
+        frame_state['reason'] = self._temporal_reason(frame_state, gaze_is_bad)
 
         self.temporal_window.append(frame_state)
         bad_frame_count = sum(1 for frame in self.temporal_window if frame['bad'])
@@ -688,23 +743,36 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             / len(self.temporal_window),
             2,
         )
-        warning_triggered = bad_frame_count >= self.TEMPORAL_BAD_FRAME_THRESHOLD
+        warning_triggered = (
+            bad_frame_count >= self.TEMPORAL_BAD_FRAME_THRESHOLD
+            or yawn_reliable
+            or face_missing_reliable
+        )
 
         result['temporal'] = {
             'bad_frame_count': bad_frame_count,
             'window_size': len(self.temporal_window),
             'smoothed_confidence': smoothed_confidence,
             'warning_triggered': warning_triggered,
+            'warning_reason': self._dominant_temporal_reason() if warning_triggered else None,
+            'face_missing_frame_count': self.face_missing_frame_count,
+            'yawn_evidence_count': yawn_evidence_count,
+            'yawn_evidence_duration': round(yawn_duration, 2),
         }
         analysis['eyes_open'] = eyes_open
         analysis['head_pose_valid'] = head_pose_valid
 
+        if not face_detected and not face_missing_reliable:
+            self._suppress_transient_face_missing(result)
+
         if warning_triggered:
+            warning_reason = result['temporal']['warning_reason'] or 'attention'
             result['concentration_score'] = min(result.get('concentration_score', 0), 3)
             result['concentration_level'] = 'low'
-            result['message'] = 'Repeated poor attention signals'
+            result['message'] = f'Repeated {warning_reason.replace("_", " ")} signal'
             engagement['video_attentive'] = False
             engagement['trigger_feedback'] = True
+            self._set_temporal_ui_warning(result, warning_reason)
             self._normalize_engagement_state(engagement)
             return
 
@@ -728,6 +796,100 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             result['message'] = 'Unreliable gaze signal'
 
         self._normalize_engagement_state(engagement)
+
+    def _temporal_reason(self, frame_state, gaze_is_bad):
+        if frame_state['face_missing_reliable']:
+            return 'face_missing'
+        if frame_state['yawning']:
+            return 'yawning'
+        if not frame_state['eyes_open']:
+            return 'eyes_closed'
+        if gaze_is_bad:
+            return 'gaze'
+        if frame_state['blurry']:
+            return 'blur'
+        if frame_state['low_light']:
+            return 'low_light'
+        if not frame_state['head_pose_valid']:
+            return 'head_pose'
+        if frame_state['confidence'] < 0.6:
+            return 'confidence'
+        return None
+
+    def _dominant_temporal_reason(self):
+        priority = ['face_missing', 'yawning', 'eyes_closed', 'gaze', 'blur', 'low_light', 'head_pose', 'confidence']
+        counts = collections.Counter(
+            frame.get('reason')
+            for frame in self.temporal_window
+            if frame.get('bad') and frame.get('reason')
+        )
+        for reason in priority:
+            if counts.get(reason):
+                return reason
+        return None
+
+    def _set_temporal_ui_warning(self, result, reason):
+        ui_flags = result.setdefault('ui_flags', {})
+        ui_message = result.setdefault('ui_message', {})
+        for key in (
+            'face_missing',
+            'yawning',
+            'eyes_closed',
+            'looking_left',
+            'looking_right',
+            'looking_up',
+            'looking_down',
+            'head_moved',
+            'low_light',
+        ):
+            ui_flags[key] = False
+
+        flag_key = {
+            'face_missing': 'face_missing',
+            'yawning': 'yawning',
+            'eyes_closed': 'eyes_closed',
+            'gaze': 'looking_left',
+            'blur': 'blurry',
+            'low_light': 'low_light',
+            'head_pose': 'head_moved',
+        }.get(reason)
+        if flag_key:
+            ui_flags[flag_key] = True
+
+        messages = {
+            'face_missing': ('Face Alert', 'Face not detected repeatedly. Please keep your face inside the camera frame.'),
+            'yawning': ('Drowsiness Alert', 'Repeated yawning detected. Please take a short break and refocus.'),
+            'eyes_closed': ('Eye Alert', 'Eyes closed detected repeatedly. Please keep your eyes open and focus on the video.'),
+            'gaze': ('Attention Alert', 'Repeated off-screen gaze detected. Please focus on the video.'),
+            'blur': ('Frame Quality Alert', 'Repeated blurry frames detected. Please steady the camera.'),
+            'low_light': ('Lighting Alert', 'Repeated low-light frames detected. Move to a brighter area.'),
+            'head_pose': ('Position Alert', 'Repeated head movement detected. Please face the screen.'),
+        }
+        title, message = messages.get(reason, ('Attention Alert', 'Repeated attention issue detected. Please refocus.'))
+        ui_flags['should_show_alert'] = True
+        ui_flags['can_continue'] = False
+        ui_message.update({
+            'reason': reason,
+            'title': title,
+            'message': message,
+            'severity': 'warning',
+        })
+
+    def _suppress_transient_face_missing(self, result):
+        ui_flags = result.setdefault('ui_flags', {})
+        ui_message = result.setdefault('ui_message', {})
+        ui_flags['face_missing'] = False
+        ui_flags['should_show_alert'] = False
+        ui_message.update({
+            'reason': 'face_transient',
+            'title': 'Face Tracking',
+            'message': 'Face detection briefly dropped; continuing with temporal smoothing.',
+            'severity': 'info',
+        })
+        if result.get('concentration_level') == 'low':
+            result['concentration_level'] = 'medium'
+            result['concentration_score'] = max(result.get('concentration_score', 0), 4)
+            result['message'] = 'Transient face detection miss'
 
     def _normalize_engagement_state(self, engagement):
         if engagement.get('state') == 'watching_video':

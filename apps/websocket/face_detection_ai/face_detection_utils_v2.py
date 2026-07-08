@@ -44,7 +44,7 @@ predictor = dlib.shape_predictor(PREDICTOR_PATH)
 GAZE_LOW = 0.6
 GAZE_HIGH = 2.5
 GAZE_RIGHT_THRESHOLD = 0.45
-GAZE_LEFT_THRESHOLD = 2.5
+GAZE_LEFT_THRESHOLD = 4.0
 PITCH_UP_THRESHOLD = 12.0
 PITCH_DOWN_THRESHOLD = -12.0
 HEAD_LIMIT = 25
@@ -117,6 +117,27 @@ def build_analysis(
     if extra:
         analysis.update(extra)
     return analysis
+
+def add_debug_detection_fields(
+    target: Dict[str, Any],
+    *,
+    mlkit_box_present: bool,
+    haar_faces_count: int = 0,
+    dlib_faces_count: int = 0,
+    fallback_used: bool = False,
+    face_missing_frame_count: int = 0,
+) -> Dict[str, Any]:
+    if not getattr(django_settings, "DEBUG", False):
+        return target
+
+    target.update({
+        "mlkit_box_present": bool(mlkit_box_present),
+        "haar_faces_count": int(haar_faces_count or 0),
+        "dlib_faces_count": int(dlib_faces_count or 0),
+        "fallback_used": bool(fallback_used),
+        "face_missing_frame_count": int(face_missing_frame_count or 0),
+    })
+    return target
 
 def _safe_probability(value):
     try:
@@ -806,6 +827,11 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             or client_x + client_w > frame_width
             or client_y + client_h > frame_height
         )
+        mlkit_box_present = not (
+            client_box_missing
+            or client_box_is_full_frame
+            or client_box_out_of_frame
+        )
         if client_box_missing or client_box_is_full_frame or client_box_out_of_frame:
             _, fallback_validation = validate_client_face_box_for_fallback(
                 client_x=client_x,
@@ -835,6 +861,12 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     "confidence": 0.0,
                     **fallback_validation,
                 },
+            )
+            add_debug_detection_fields(
+                analysis,
+                mlkit_box_present=mlkit_box_present,
+                fallback_used=True,
+                face_missing_frame_count=1,
             )
             metrics = {
                 "faces_count": 0,
@@ -885,6 +917,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
                 
         faces_haar = list(faces_haar)
+        haar_faces_count = len(faces_haar)
         client_face_center = (
             client_x + (client_w / 2.0),
             client_y + (client_h / 2.0),
@@ -944,6 +977,13 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                         "confidence": 0.0,
                         **fallback_validation,
                     },
+                )
+                add_debug_detection_fields(
+                    analysis,
+                    mlkit_box_present=mlkit_box_present,
+                    haar_faces_count=haar_faces_count,
+                    fallback_used=True,
+                    face_missing_frame_count=1,
                 )
                 metrics = {
                     "faces_count": 0,
@@ -1024,6 +1064,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         
         # ✅ DLIB FACIAL LANDMARKS ON ACTUAL FRAME
         rects = detector(gray, 0)
+        dlib_faces_count = len(rects)
         if len(rects) == 0:
             if not fallback_used:
                 fallback_used = True
@@ -1079,6 +1120,14 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     **fallback_validation,
                 },
             )
+            add_debug_detection_fields(
+                analysis,
+                mlkit_box_present=mlkit_box_present,
+                haar_faces_count=haar_faces_count,
+                dlib_faces_count=dlib_faces_count,
+                fallback_used=True,
+                face_missing_frame_count=1,
+            )
             metrics = {
                 "faces_count": 0,
                 "brightness_score": round(brightness_score, 2),
@@ -1126,6 +1175,13 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             engagement_info["video_attentive"] = False
             engagement_info["reading_focus"] = False
             analysis = build_analysis(AnalysisFlags(), low_light)
+            add_debug_detection_fields(
+                analysis,
+                mlkit_box_present=mlkit_box_present,
+                haar_faces_count=haar_faces_count,
+                dlib_faces_count=dlib_faces_count,
+                face_missing_frame_count=1,
+            )
             metrics = {
                 "faces_count": 0,
                 "brightness_score": round(brightness_score, 2),
@@ -1208,10 +1264,14 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             YAWN_THRESH,
             float(client_h or 0) * settings["yawn_face_height_ratio"],
         )
-        yawning = bool(yawn_distance > yawn_threshold)
+        yawn_ratio = yawn_distance / yawn_threshold if yawn_threshold else 0.0
+        yawn_evidence = bool(yawn_ratio >= 1.25)
+        yawn_confidence = min(1.0, max(0.0, (yawn_ratio - 1.0) / 0.75))
+        yawn_reliable = False
+        yawning = False
 
         # Drowsiness detection
-        if yawning or eyes_closed:
+        if eyes_closed:
             drowsy_state = 0.8
         
         # Validate gaze and head pose
@@ -1235,6 +1295,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         analysis_extra = {
             "eyes_closed": eyes_closed,
             "yawning": yawning,
+            "yawn_evidence": yawn_evidence,
+            "yawn_confidence": round(yawn_confidence, 2),
+            "yawn_reliable": yawn_reliable,
             "gaze_state": gaze_state,
         }
         fallback_analysis = {
@@ -1253,6 +1316,13 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             ),
         }
         analysis_extra.update(fallback_analysis)
+        add_debug_detection_fields(
+            analysis_extra,
+            mlkit_box_present=mlkit_box_present,
+            haar_faces_count=haar_faces_count,
+            dlib_faces_count=dlib_faces_count,
+            fallback_used=bool(fallback_used),
+        )
         
         # Calculate engagement
         engagement_info = update_engagement(
@@ -1364,6 +1434,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "blink_ratio": round(blink_ratio, 4),
             "yawn_distance": round(yawn_distance, 4),
             "yawn_threshold": round(yawn_threshold, 4),
+            "yawn_evidence": yawn_evidence,
+            "yawn_confidence": round(yawn_confidence, 2),
+            "yawn_reliable": yawn_reliable,
             "drowsy_state": drowsy_state,
             "faces_count": faces_count,
             "brightness_score": round(brightness_score, 2),
