@@ -408,6 +408,187 @@ def _safe_float(value, default=None):
         return default
 
 
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _debug_box_inside_frame(x, y, width, height, frame_width, frame_height):
+    return (
+        width > 0
+        and height > 0
+        and x >= 0
+        and y >= 0
+        and x + width <= frame_width
+        and y + height <= frame_height
+    )
+
+
+def _debug_box_center(x, y, width, height):
+    if width <= 0 or height <= 0:
+        return None
+    return (round(x + width / 2.0, 2), round(y + height / 2.0, 2))
+
+
+def _debug_center_distance(center_a, center_b):
+    if center_a is None or center_b is None:
+        return None
+    return round(hypot(center_a[0] - center_b[0], center_a[1] - center_b[1]), 2)
+
+
+def _debug_safe_name(value):
+    safe_name = str(value or "unknown")
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in safe_name)[:80]
+
+
+def _save_debug_overlay(frame_bgr, frame_id, session_id, client_box, server_box):
+    if not getattr(django_settings, "DEBUG", False):
+        return None
+    if not isinstance(frame_bgr, np.ndarray):
+        return None
+
+    try:
+        debug_dir = "/tmp/websocket_debug"
+        os.makedirs(debug_dir, exist_ok=True)
+        file_prefix = (
+            f"{int(time.time() * 1000)}_"
+            f"{_debug_safe_name(session_id)}_{_debug_safe_name(frame_id)}"
+        )
+        decoded_path = os.path.join(debug_dir, f"{file_prefix}_decoded.jpg")
+        overlay_path = os.path.join(debug_dir, f"{file_prefix}_overlay.jpg")
+        overlay = frame_bgr.copy()
+        cv2.imwrite(decoded_path, frame_bgr)
+
+        if client_box is not None:
+            x, y, width, height = client_box
+            if width > 0 and height > 0:
+                cv2.rectangle(
+                    overlay,
+                    (int(x), int(y)),
+                    (int(x + width), int(y + height)),
+                    (255, 0, 0),
+                    2,
+                )
+        if server_box is not None:
+            x, y, width, height = server_box
+            if width > 0 and height > 0:
+                cv2.rectangle(
+                    overlay,
+                    (int(x), int(y)),
+                    (int(x + width), int(y + height)),
+                    (0, 255, 0),
+                    2,
+                )
+
+        cv2.imwrite(overlay_path, overlay)
+        return {
+            "debug_decoded_image_path": decoded_path,
+            "debug_overlay_path": overlay_path,
+        }
+    except Exception:
+        logger.exception("websocket_mobile_frame_debug_overlay_failed")
+        return None
+
+
+def log_mobile_frame_debug(
+    *,
+    frame_bgr,
+    user_id=None,
+    session_id=None,
+    frame_id=None,
+    payload_frame_width=None,
+    payload_frame_height=None,
+    decoded_frame_width=None,
+    decoded_frame_height=None,
+    client_x=0,
+    client_y=0,
+    client_w=0,
+    client_h=0,
+    haar_faces_count=0,
+    dlib_faces_count=0,
+    fallback_used=None,
+    server_box=None,
+    left_eye_open_probability=None,
+    right_eye_open_probability=None,
+    eyes_closed=None,
+    eye_decision_reason=None,
+    gaze_ratio=None,
+    gaze_state=None,
+    gaze_reliable=None,
+    yawn_distance=None,
+    yawning=None,
+    primary_attention_reason=None,
+):
+    if not getattr(django_settings, "DEBUG", False):
+        return
+
+    payload_frame_width = _safe_int(payload_frame_width)
+    payload_frame_height = _safe_int(payload_frame_height)
+    decoded_frame_width = _safe_int(decoded_frame_width)
+    decoded_frame_height = _safe_int(decoded_frame_height)
+    client_box = (client_x, client_y, client_w, client_h)
+    client_face_center = _debug_box_center(client_x, client_y, client_w, client_h)
+    server_face_center = _debug_box_center(*server_box) if server_box is not None else None
+    debug_paths = _save_debug_overlay(
+        frame_bgr,
+        frame_id,
+        session_id,
+        client_box,
+        server_box,
+    ) or {}
+
+    logger.debug(
+        "websocket_mobile_frame_debug",
+        extra={
+            "user_id": user_id,
+            "session_id": session_id,
+            "payload_frame_width": payload_frame_width,
+            "payload_frame_height": payload_frame_height,
+            "decoded_frame_width": decoded_frame_width,
+            "decoded_frame_height": decoded_frame_height,
+            "frame_dimension_match": (
+                payload_frame_width == decoded_frame_width
+                and payload_frame_height == decoded_frame_height
+            ),
+            "client_face_x": client_x,
+            "client_face_y": client_y,
+            "client_face_width": client_w,
+            "client_face_height": client_h,
+            "client_box_inside_frame": _debug_box_inside_frame(
+                client_x,
+                client_y,
+                client_w,
+                client_h,
+                decoded_frame_width,
+                decoded_frame_height,
+            ),
+            "haar_faces_count": haar_faces_count,
+            "dlib_faces_count": dlib_faces_count,
+            "fallback_used": fallback_used,
+            "client_face_center": client_face_center,
+            "server_face_center": server_face_center,
+            "client_server_center_distance": _debug_center_distance(
+                client_face_center,
+                server_face_center,
+            ),
+            "left_eye_open_probability": left_eye_open_probability,
+            "right_eye_open_probability": right_eye_open_probability,
+            "eyes_closed": eyes_closed,
+            "eye_decision_reason": eye_decision_reason,
+            "gaze_ratio": gaze_ratio,
+            "gaze_state": gaze_state,
+            "gaze_reliable": gaze_reliable,
+            "yawn_distance": yawn_distance,
+            "yawning": yawning,
+            "primary_attention_reason": primary_attention_reason,
+            "debug_decoded_image_path": debug_paths.get("debug_decoded_image_path"),
+            "debug_overlay_path": debug_paths.get("debug_overlay_path"),
+        },
+    )
+
+
 def _client_box_texture_score(gray, x, y, width, height):
     roi = gray[int(y):int(y + height), int(x):int(x + width)]
     if roi.size == 0:
@@ -705,8 +886,12 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         face_timestamp_seconds = face_data.get("face_timestamp_seconds")
         face_frame_id = face_data.get("face_frame_id")
         frame_id = face_data.get("frame_id")
+        session_id = face_data.get("session_id")
+        user_id = face_data.get("user_id")
         frame_width = face_data.get("frame_width", 640)
         frame_height = face_data.get("frame_height", 480)
+        decoded_frame_width = _safe_int(face_data.get("decoded_frame_width"), 0)
+        decoded_frame_height = _safe_int(face_data.get("decoded_frame_height"), 0)
         custom_settings = face_data.get("custom_settings", {}) or {}
         mode = face_data.get("mode", "video")
         pdf_is_visible = bool(face_data.get("pdf_is_visible", False))
@@ -785,6 +970,8 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             }
         
         h, w = frame_bgr.shape[:2]
+        decoded_frame_width = decoded_frame_width or w
+        decoded_frame_height = decoded_frame_height or h
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         brightness_score = float(np.mean(gray))
         low_light = brightness_score < custom_settings.get("low_light_threshold", LOW_LIGHT_THRESHOLD)
@@ -820,6 +1007,22 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 frame_time_seconds=frame_time_seconds,
                 face_frame_id=face_frame_id,
                 frame_id=frame_id,
+            )
+            log_mobile_frame_debug(
+                frame_bgr=frame_bgr,
+                user_id=user_id,
+                session_id=session_id,
+                frame_id=frame_id,
+                payload_frame_width=frame_width,
+                payload_frame_height=frame_height,
+                decoded_frame_width=decoded_frame_width,
+                decoded_frame_height=decoded_frame_height,
+                client_x=client_x,
+                client_y=client_y,
+                client_w=client_w,
+                client_h=client_h,
+                fallback_used=True,
+                primary_attention_reason="No valid client face box received",
             )
             engagement_info = update_engagement(
                 0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
@@ -885,6 +1088,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         )
                 
         faces_haar = list(faces_haar)
+        haar_faces_count = len(faces_haar)
         client_face_center = (
             client_x + (client_w / 2.0),
             client_y + (client_h / 2.0),
@@ -930,6 +1134,23 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 frame_id=frame_id,
             )
             if not fallback_valid:
+                log_mobile_frame_debug(
+                    frame_bgr=frame_bgr,
+                    user_id=user_id,
+                    session_id=session_id,
+                    frame_id=frame_id,
+                    payload_frame_width=frame_width,
+                    payload_frame_height=frame_height,
+                    decoded_frame_width=decoded_frame_width,
+                    decoded_frame_height=decoded_frame_height,
+                    client_x=client_x,
+                    client_y=client_y,
+                    client_w=client_w,
+                    client_h=client_h,
+                    haar_faces_count=haar_faces_count,
+                    fallback_used=True,
+                    primary_attention_reason="Client face box fallback rejected",
+                )
                 engagement_info = update_engagement(
                     0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
                 )
@@ -982,6 +1203,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         
         # Use first detected face
         x, y, fw, fh = faces_haar[0]
+        server_box = (x, y, fw, fh)
         face_center_x = x + fw // 2
         face_center_y = y + fh // 2
         frame_center_x = w // 2
@@ -1024,6 +1246,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         
         # ✅ DLIB FACIAL LANDMARKS ON ACTUAL FRAME
         rects = detector(gray, 0)
+        dlib_faces_count = len(rects)
         if len(rects) == 0:
             if not fallback_used:
                 fallback_used = True
@@ -1052,6 +1275,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                             int(client_y + client_h),
                         )
                     ]
+                    dlib_faces_count = len(rects)
             else:
                 fallback_valid = True
                 rects = [
@@ -1062,8 +1286,28 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                         int(client_y + client_h),
                     )
                 ]
+                dlib_faces_count = len(rects)
         if len(rects) == 0 and fallback_used:
             faces_count = 0
+            log_mobile_frame_debug(
+                frame_bgr=frame_bgr,
+                user_id=user_id,
+                session_id=session_id,
+                frame_id=frame_id,
+                payload_frame_width=frame_width,
+                payload_frame_height=frame_height,
+                decoded_frame_width=decoded_frame_width,
+                decoded_frame_height=decoded_frame_height,
+                client_x=client_x,
+                client_y=client_y,
+                client_w=client_w,
+                client_h=client_h,
+                haar_faces_count=haar_faces_count,
+                dlib_faces_count=faces_count,
+                fallback_used=True,
+                server_box=server_box,
+                primary_attention_reason="Client face box fallback rejected",
+            )
             engagement_info = update_engagement(
                 0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
             )
@@ -1119,6 +1363,25 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         flags.face_present = faces_count > 0
 
         if faces_count == 0:
+            log_mobile_frame_debug(
+                frame_bgr=frame_bgr,
+                user_id=user_id,
+                session_id=session_id,
+                frame_id=frame_id,
+                payload_frame_width=frame_width,
+                payload_frame_height=frame_height,
+                decoded_frame_width=decoded_frame_width,
+                decoded_frame_height=decoded_frame_height,
+                client_x=client_x,
+                client_y=client_y,
+                client_w=client_w,
+                client_h=client_h,
+                haar_faces_count=haar_faces_count,
+                dlib_faces_count=faces_count,
+                fallback_used=fallback_used,
+                server_box=server_box,
+                primary_attention_reason="No clear face landmarks detected",
+            )
             engagement_info = update_engagement(
                 0.0, 0.8, 0.0, 0.0, 0, settings, gaze_history, inattention_start, frame_time_seconds
             )
@@ -1232,6 +1495,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             gaze_state = "LEFT"
         else:
             gaze_state = "CENTER"
+        gaze_reliable = 0.2 <= float(gaze_ratio or 0.0) <= 8.0
         analysis_extra = {
             "eyes_closed": eyes_closed,
             "yawning": yawning,
@@ -1349,6 +1613,35 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             recommendations.append("Improve room lighting for better face detection")
         if not recommendations:
             recommendations.append("Perfect! Maintain your current position")
+
+        log_mobile_frame_debug(
+            frame_bgr=frame_bgr,
+            user_id=user_id,
+            session_id=session_id,
+            frame_id=frame_id,
+            payload_frame_width=frame_width,
+            payload_frame_height=frame_height,
+            decoded_frame_width=decoded_frame_width,
+            decoded_frame_height=decoded_frame_height,
+            client_x=client_x,
+            client_y=client_y,
+            client_w=client_w,
+            client_h=client_h,
+            haar_faces_count=haar_faces_count,
+            dlib_faces_count=faces_count,
+            fallback_used=fallback_used,
+            server_box=server_box,
+            left_eye_open_probability=left_eye_open_probability,
+            right_eye_open_probability=right_eye_open_probability,
+            eyes_closed=eyes_closed,
+            eye_decision_reason=eye_decision_reason,
+            gaze_ratio=round(gaze_ratio, 4),
+            gaze_state=gaze_state,
+            gaze_reliable=gaze_reliable,
+            yawn_distance=round(yawn_distance, 4),
+            yawning=yawning,
+            primary_attention_reason=msg,
+        )
 
         metrics = {
             "face_area_ratio": round(face_area_ratio, 4),
