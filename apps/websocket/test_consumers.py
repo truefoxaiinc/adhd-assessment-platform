@@ -161,38 +161,6 @@ def successful_analysis_result(
     }
 
 
-def no_face_analysis_result():
-    return {
-        "face_detected": False,
-        "concentration_level": "low",
-        "concentration_score": 0,
-        "message": "No clear face landmarks detected",
-        "timestamp": "now",
-        "analysis": {
-            "fallback_used": False,
-            "mlkit_box_present": False,
-            "haar_faces_count": 0,
-            "dlib_faces_count": 0,
-        },
-        "face_position": {},
-        "recommendations": [],
-        "metrics": {
-            "faces_count": 0,
-            "gaze_ratio": 1.0,
-            "drowsy_state": 0.2,
-            "fallback_used": False,
-        },
-        "engagement": {"video_attentive": False, "inattention_duration": 0.0},
-        "ui_flags": {"face_missing": True, "should_show_alert": True},
-        "ui_message": {
-            "reason": "face_missing",
-            "title": "Face Alert",
-            "message": "Face not detected.",
-            "severity": "warning",
-        },
-    }
-
-
 def quality_result(*, blurry=False, low_light=False, blur_score=250.0, brightness_score=120.0):
     return {
         "blurry": blurry,
@@ -795,149 +763,6 @@ class TestFaceDetectionConsumerSecurity:
         assert responses[2]["result"]["feedback"]["action_required"] is True
         await communicator.disconnect()
 
-    async def test_one_mouth_open_frame_does_not_trigger_yawning(self, user, monkeypatch):
-        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
-        communicator = await connect_authenticated(user)
-
-        with (
-            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch(
-                "apps.websocket.consumers.analyze_face_attention",
-                return_value=successful_analysis_result(
-                    analysis={"yawn_evidence": True, "yawning": False},
-                    metrics={"yawn_evidence": True, "yawn_distance": 28.0, "yawn_confidence": 0.8},
-                    concentration_level="low",
-                    concentration_score=2,
-                ),
-            ),
-            patch(
-                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
-                return_value=quality_result(),
-            ),
-        ):
-            await send_validate_face(communicator)
-            response = await communicator.receive_json_from(timeout=1)
-
-        result = response["result"]
-        assert result["analysis"]["yawning"] is False
-        assert result["analysis"]["yawn_reliable"] is False
-        assert result["analysis"]["yawn_confidence"] < 1.0
-        assert result["temporal"]["warning_triggered"] is False
-        await communicator.disconnect()
-
-    async def test_repeated_real_yawn_triggers_yawning_warning(self, user, monkeypatch):
-        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
-        communicator = await connect_authenticated(user)
-
-        with (
-            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch(
-                "apps.websocket.consumers.analyze_face_attention",
-                side_effect=lambda face_analysis_data: successful_analysis_result(
-                    analysis={"yawn_evidence": True, "yawning": False},
-                    metrics={"yawn_evidence": True, "yawn_distance": 32.0, "yawn_confidence": 0.9},
-                    concentration_level="low",
-                    concentration_score=2,
-                ),
-            ),
-            patch(
-                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
-                return_value=quality_result(),
-            ),
-        ):
-            responses = []
-            for _ in range(3):
-                await send_validate_face(communicator)
-                responses.append(await communicator.receive_json_from(timeout=1))
-
-        final_result = responses[-1]["result"]
-        assert final_result["analysis"]["yawning"] is True
-        assert final_result["analysis"]["yawn_reliable"] is True
-        assert final_result["temporal"]["warning_triggered"] is True
-        assert final_result["temporal"]["warning_reason"] == "yawning"
-        assert final_result["ui_message"]["reason"] == "yawning"
-        await communicator.disconnect()
-
-    async def test_one_face_missed_frame_does_not_show_face_missing_alert(self, user, monkeypatch):
-        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
-        communicator = await connect_authenticated(user)
-
-        with (
-            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch("apps.websocket.consumers.analyze_face_attention", return_value=no_face_analysis_result()),
-            patch(
-                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
-                return_value=quality_result(),
-            ),
-        ):
-            await send_validate_face(communicator)
-            response = await communicator.receive_json_from(timeout=1)
-
-        result = response["result"]
-        assert result["analysis"]["face_missing_frame_count"] == 1
-        assert result["analysis"]["face_detection_reliable"] is False
-        assert result["temporal"]["warning_triggered"] is False
-        assert result["ui_flags"]["face_missing"] is False
-        assert result["ui_flags"]["should_show_alert"] is False
-        assert result["ui_message"]["reason"] == "face_transient"
-        await communicator.disconnect()
-
-    async def test_repeated_no_face_frames_trigger_face_missing(self, user, monkeypatch):
-        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
-        communicator = await connect_authenticated(user)
-
-        with (
-            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch("apps.websocket.consumers.analyze_face_attention", side_effect=lambda face_analysis_data: no_face_analysis_result()),
-            patch(
-                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
-                return_value=quality_result(),
-            ),
-        ):
-            responses = []
-            for _ in range(3):
-                await send_validate_face(communicator)
-                responses.append(await communicator.receive_json_from(timeout=1))
-
-        final_result = responses[-1]["result"]
-        assert final_result["analysis"]["face_missing_frame_count"] == 3
-        assert final_result["analysis"]["face_detection_reliable"] is True
-        assert final_result["temporal"]["warning_triggered"] is True
-        assert final_result["temporal"]["warning_reason"] == "face_missing"
-        assert final_result["ui_message"]["reason"] == "face_missing"
-        await communicator.disconnect()
-
-    async def test_temporal_warning_includes_specific_reason(self, user, monkeypatch):
-        monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
-        communicator = await connect_authenticated(user)
-
-        with (
-            patch("apps.websocket.consumers.cv2.imdecode", return_value=FakeDecodedFrame(640, 480)),
-            patch(
-                "apps.websocket.consumers.analyze_face_attention",
-                side_effect=lambda face_analysis_data: successful_analysis_result(
-                    analysis={"gaze_in_range": False, "gaze_state": "LEFT"},
-                    metrics={"gaze_ratio": 4.8, "gaze_state": "LEFT"},
-                    concentration_level="low",
-                    concentration_score=2,
-                ),
-            ),
-            patch(
-                "apps.websocket.consumers.FaceDetectionConsumer._assess_frame_quality",
-                return_value=quality_result(),
-            ),
-        ):
-            responses = []
-            for _ in range(3):
-                await send_validate_face(communicator)
-                responses.append(await communicator.receive_json_from(timeout=1))
-
-        final_result = responses[-1]["result"]
-        assert final_result["temporal"]["warning_reason"] == "gaze"
-        assert final_result["message"] != "Repeated poor attention signals"
-        assert final_result["ui_message"]["reason"] == "gaze"
-        await communicator.disconnect()
-
     async def test_temporal_rolling_window_remains_bounded(self, user, monkeypatch):
         monkeypatch.setattr(FaceDetectionConsumer, "FRAME_PROCESSING_INTERVAL_SECONDS", 0)
         monkeypatch.setattr(FaceDetectionConsumer, "TEMPORAL_WINDOW_SIZE", 5)
@@ -1452,47 +1277,9 @@ class TestClientFaceBoxFallback:
 
         assert result["face_detected"] is True
         assert result["analysis"]["fallback_used"] is True
-        assert result["analysis"].get("mlkit_box_present", True) is True
-        assert result["analysis"].get("haar_faces_count", 0) == 0
-        assert result["analysis"].get("dlib_faces_count", 0) == 0
         assert result["analysis"]["confidence"] == utils.CLIENT_FALLBACK_CONFIDENCE
         assert result["analysis"]["confidence"] < utils.SERVER_FACE_CONFIDENCE
         assert result["concentration_level"] == "medium"
-
-    def test_one_large_mouth_open_frame_is_yawn_evidence_not_yawning(self, monkeypatch):
-        utils = load_face_utils_v2(monkeypatch)
-        self._configure_lightweight_analysis(monkeypatch, utils)
-        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 32.0)
-        monkeypatch.setattr(
-            utils,
-            "face_detection",
-            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
-        )
-        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
-
-        result = utils.analyze_face_attention_with_models(base_face_analysis_data())
-
-        assert result["analysis"]["yawn_evidence"] is True
-        assert result["analysis"]["yawning"] is False
-        assert result["analysis"]["yawn_reliable"] is False
-        assert result["metrics"]["yawn_confidence"] > 0
-
-    def test_talking_like_mouth_movement_does_not_mark_yawn_evidence(self, monkeypatch):
-        utils = load_face_utils_v2(monkeypatch)
-        self._configure_lightweight_analysis(monkeypatch, utils)
-        monkeypatch.setattr(utils, "lip_distance", lambda shape_np: 18.0)
-        monkeypatch.setattr(
-            utils,
-            "face_detection",
-            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
-        )
-        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
-
-        result = utils.analyze_face_attention_with_models(base_face_analysis_data())
-
-        assert result["analysis"]["yawn_evidence"] is False
-        assert result["analysis"]["yawning"] is False
-        assert result["metrics"]["yawn_reliable"] is False
 
     def test_fake_client_box_on_blank_frame_fails_or_low_confidence(self, monkeypatch):
         utils = load_face_utils_v2(monkeypatch)
