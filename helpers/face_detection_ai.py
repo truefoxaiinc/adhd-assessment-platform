@@ -1,6 +1,9 @@
 import numpy as np
 from datetime import datetime
 import time
+import logging
+
+
 
 class FaceDetectionAI:
     def __init__(self):
@@ -105,7 +108,7 @@ class FaceDetectionAI:
             return result
             
         except Exception as e:
-            print(f"Face dimensions validation error: {e}")
+            logging.error(f"Face dimensions validation error: {e}")
             return {
                 'timestamp': datetime.now().isoformat(),
                 'face_count': 0,
@@ -354,7 +357,7 @@ class FaceDetectionAI:
                 self.detection_history = self.detection_history[-self.max_history:]
                 
         except Exception as e:
-            print(f"History update error: {e}")
+            logging.error(f"History update error: {e}")
     
     def _get_processing_time(self):
         """Get processing time since last detection"""
@@ -398,7 +401,7 @@ class FaceDetectionAI:
             }
             
         except Exception as e:
-            print(f"Stats calculation error: {e}")
+            logging.error(f"Stats calculation error: {e}")
             return {
                 'total_detections': 0,
                 'success_rate': 0,
