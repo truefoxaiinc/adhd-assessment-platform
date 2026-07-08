@@ -34,7 +34,7 @@ predictor = dlib.shape_predictor(PREDICTOR_PATH)
 GAZE_LOW = 0.6
 GAZE_HIGH = 2.5
 GAZE_RIGHT_THRESHOLD = 0.45
-GAZE_LEFT_THRESHOLD = 2.5
+GAZE_LEFT_THRESHOLD = 3.6
 PITCH_UP_THRESHOLD = 12.0
 PITCH_DOWN_THRESHOLD = -12.0
 HEAD_LIMIT = 25
@@ -47,6 +47,7 @@ READING_MIN_FREQ = 0.1
 READING_MAX_FREQ = 1.5
 YAWN_THRESH = 15.0
 YAWN_FACE_HEIGHT_RATIO = 0.08
+YAWN_CONSECUTIVE_FRAME_THRESHOLD = 3
 BLINK_RATIO_THRESHOLD = 4.75
 EYE_OPEN_PROBABILITY_THRESHOLD = 0.3
 EAR_CLOSED_THRESHOLD = 0.2
@@ -402,6 +403,49 @@ def _client_box_texture_score(gray, x, y, width, height):
     return float(np.std(roi))
 
 
+def _box_iou(box_a, box_b):
+    if box_a is None or box_b is None:
+        return 0.0
+    ax, ay, aw, ah = box_a
+    bx, by, bw, bh = box_b
+    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
+        return 0.0
+    x1 = max(ax, bx)
+    y1 = max(ay, by)
+    x2 = min(ax + aw, bx + bw)
+    y2 = min(ay + ah, by + bh)
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    union = aw * ah + bw * bh - intersection
+    if union <= 0:
+        return 0.0
+    return intersection / float(union)
+
+
+def _warmup_can_downgrade_stale_fallback(*, validation, warmup, boxes_overlap, face_frame_id, frame_id):
+    if not warmup or not boxes_overlap:
+        return False
+    if face_frame_id is not None and frame_id is not None and face_frame_id != frame_id:
+        return False
+    reasons = set(validation.get("client_box_validation_reasons", []))
+    return bool(reasons) and reasons.issubset({"stale_timestamp"})
+
+
+def _downgrade_stale_fallback(validation):
+    validation = dict(validation)
+    reasons = [
+        reason
+        for reason in validation.get("client_box_validation_reasons", [])
+        if reason != "stale_timestamp"
+    ]
+    validation["client_box_validation_reasons"] = reasons
+    validation["stale_timestamp_downgraded"] = True
+    validation["fallback_confidence"] = min(
+        float(validation.get("fallback_confidence", CLIENT_FALLBACK_CONFIDENCE)),
+        0.45,
+    )
+    return validation
+
+
 def validate_client_face_box_for_fallback(
     *,
     client_x,
@@ -701,6 +745,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         eye_data = face_data.get("eye", {}) or {}
         last_attention_state = face_data.get("last_attention_state", "idle_distracted")
         expected_fps = float(face_data.get("expected_fps", EXPECTED_FPS) or EXPECTED_FPS)
+        processed_frame_index = int(face_data.get("processed_frame_index", 9999) or 9999)
+        session_elapsed_seconds = float(face_data.get("session_elapsed_seconds", 9999.0) or 9999.0)
+        is_warmup_frame = processed_frame_index <= 3 or session_elapsed_seconds <= 2.0
         frame_time_seconds = face_data.get("frame_time_seconds")
         if frame_time_seconds is None:
             frame_time_seconds = time.time()
@@ -710,6 +757,7 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         # Extract state passed from consumer
         gaze_history = face_data.get("gaze_history") if face_data.get("gaze_history") is not None else deque()
         blink_history = face_data.get("blink_history") if face_data.get("blink_history") is not None else deque()
+        yawn_history = face_data.get("yawn_history") if face_data.get("yawn_history") is not None else deque(maxlen=3)
         score_history = face_data.get("score_history") if face_data.get("score_history") is not None else deque(maxlen=5)
         inattention_start = face_data.get("inattention_start")
 
@@ -903,7 +951,12 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     ),
                 )
             ]
+            server_client_iou = _box_iou(
+                (faces_haar[0][0], faces_haar[0][1], faces_haar[0][2], faces_haar[0][3]),
+                (client_x, client_y, client_w, client_h),
+            )
         else:
+            server_client_iou = 0.0
             fallback_used = True
             fallback_valid, fallback_validation = validate_client_face_box_for_fallback(
                 client_x=client_x,
@@ -974,6 +1027,11 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         
         # Use first detected face
         x, y, fw, fh = faces_haar[0]
+        server_client_iou = _box_iou(
+            (x, y, fw, fh),
+            (client_x, client_y, client_w, client_h),
+        )
+        server_client_boxes_overlap = server_client_iou > 0.1
         face_center_x = x + fw // 2
         face_center_y = y + fh // 2
         frame_center_x = w // 2
@@ -1035,8 +1093,25 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     frame_id=frame_id,
                 )
                 if not fallback_valid:
-                    rects = []
-                else:
+                    if _warmup_can_downgrade_stale_fallback(
+                        validation=fallback_validation,
+                        warmup=is_warmup_frame,
+                        boxes_overlap=server_client_boxes_overlap,
+                        face_frame_id=face_frame_id,
+                        frame_id=frame_id,
+                    ):
+                        fallback_validation = _downgrade_stale_fallback(fallback_validation)
+                        fallback_valid = True
+                    else:
+                        rects = []
+                if fallback_valid:
+                    fallback_validation["tentative_face_detected"] = True
+                    fallback_validation["client_server_iou"] = round(server_client_iou, 4)
+                    fallback_validation["warmup_frame"] = bool(is_warmup_frame)
+                    fallback_validation["fallback_confidence"] = min(
+                        float(fallback_validation.get("fallback_confidence", CLIENT_FALLBACK_CONFIDENCE)),
+                        0.55,
+                    )
                     rects = [
                         dlib.rectangle(
                             int(client_x),
@@ -1048,6 +1123,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                     dlib_faces_count = len(rects)
             else:
                 fallback_valid = True
+                fallback_validation["tentative_face_detected"] = True
+                fallback_validation["client_server_iou"] = round(server_client_iou, 4)
+                fallback_validation["warmup_frame"] = bool(is_warmup_frame)
                 rects = [
                     dlib.rectangle(
                         int(client_x),
@@ -1207,18 +1285,48 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             YAWN_THRESH,
             float(client_h or 0) * settings["yawn_face_height_ratio"],
         )
-        yawning = bool(yawn_distance > yawn_threshold)
+        server_face_height = float(fh or client_h or 0)
+        yawn_face_height_ratio = (
+            yawn_distance / server_face_height
+            if server_face_height > 0
+            else 0.0
+        )
+        raw_yawn_candidate = bool(
+            yawn_distance > yawn_threshold
+            and yawn_face_height_ratio > settings["yawn_face_height_ratio"]
+        )
 
-        # Drowsiness detection
-        if yawning or eyes_closed:
-            drowsy_state = 0.8
-        
         # Validate gaze and head pose
         flags.gaze_in_range = settings["gaze_low"] < gaze_ratio < settings["gaze_high"]
         flags.head_pose_ok = (
             -settings["head_limit"] <= pitch <= settings["head_limit"]
             and -settings["head_limit"] <= yaw <= settings["head_limit"]
         )
+        if getattr(yawn_history, "maxlen", None) is None:
+            yawn_history = deque(yawn_history, maxlen=YAWN_CONSECUTIVE_FRAME_THRESHOLD)
+        yawn_history.append(raw_yawn_candidate)
+        yawn_reliable = (
+            len(yawn_history) >= YAWN_CONSECUTIVE_FRAME_THRESHOLD
+            and all(list(yawn_history)[-YAWN_CONSECUTIVE_FRAME_THRESHOLD:])
+        )
+        eyes_clearly_open = (
+            left_eye_open_probability is not None
+            and right_eye_open_probability is not None
+            and left_eye_open_probability >= 0.75
+            and right_eye_open_probability >= 0.75
+        )
+        yawning = bool(yawn_reliable)
+        yawn_confidence = (
+            min(1.0, yawn_face_height_ratio / max(settings["yawn_face_height_ratio"], 0.001))
+            if raw_yawn_candidate
+            else 0.0
+        )
+
+        # Drowsiness detection
+        if yawning or eyes_closed:
+            drowsy_state = 0.8
+        elif raw_yawn_candidate and eyes_clearly_open and flags.head_pose_ok:
+            drowsy_state = 0.2
         flags.not_drowsy = (drowsy_state == 0.2)
 
         if pitch > settings["pitch_up_threshold"]:
@@ -1234,6 +1342,9 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
         analysis_extra = {
             "eyes_closed": eyes_closed,
             "yawning": yawning,
+            "raw_yawn_candidate": raw_yawn_candidate,
+            "yawn_reliable": yawn_reliable,
+            "yawn_confidence": round(yawn_confidence, 4),
             "gaze_state": gaze_state,
         }
         fallback_analysis = {
@@ -1250,6 +1361,10 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
                 "client_box_validation_reasons",
                 [],
             ),
+            "tentative_face_detected": fallback_validation.get("tentative_face_detected", False),
+            "stale_timestamp_downgraded": fallback_validation.get("stale_timestamp_downgraded", False),
+            "client_server_iou": fallback_validation.get("client_server_iou"),
+            "warmup_frame": fallback_validation.get("warmup_frame", bool(is_warmup_frame)),
         }
         analysis_extra.update(fallback_analysis)
         
@@ -1363,6 +1478,10 @@ def analyze_face_attention_with_models(face_data: Dict[str, Any]) -> Dict[str, A
             "blink_ratio": round(blink_ratio, 4),
             "yawn_distance": round(yawn_distance, 4),
             "yawn_threshold": round(yawn_threshold, 4),
+            "yawn_face_height_ratio": round(yawn_face_height_ratio, 4),
+            "raw_yawn_candidate": raw_yawn_candidate,
+            "yawn_reliable": yawn_reliable,
+            "yawn_confidence": round(yawn_confidence, 4),
             "drowsy_state": drowsy_state,
             "faces_count": faces_count,
             "haar_faces_count": haar_faces_count,
