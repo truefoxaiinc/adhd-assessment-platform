@@ -408,9 +408,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 'frame_id': request_frame_id,
                 'frame_width': frame_data.get('width', self.frame_width),
                 'frame_height': frame_data.get('height', self.frame_height),
-                'decoded_frame_width': frame_bgr.shape[1],
-                'decoded_frame_height': frame_bgr.shape[0],
-                'session_id': self.session_id,
                 'frame_bgr': frame_bgr,
                 'expected_fps': 30,
                 'frame_time_seconds': frame_time_seconds,
@@ -508,18 +505,6 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                     'action_required': result.get('concentration_level', '') == 'low',
                     'inattention_duration': result['engagement'].get('inattention_duration', 0)
                 }
-
-            logger.info(
-                "Face validation UI feedback: %s",
-                json.dumps(
-                    {
-                        "frame_id": request_frame_id,
-                        "ui_flags": result.get('ui_flags', {}),
-                        "ui_message": result.get('ui_message', {}),
-                    },
-                    default=str,
-                ),
-            )
 
             self.last_response_data = response_data
             await self.send(text_data=json.dumps(response_data, default=str))
