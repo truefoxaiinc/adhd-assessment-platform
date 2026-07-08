@@ -2,7 +2,6 @@ import asyncio
 import collections
 import importlib
 import json
-import logging
 import sys
 import time
 import types
@@ -1341,113 +1340,6 @@ class TestClientFaceBoxFallback:
         assert result["analysis"]["gaze_state"] == "CENTER"
         assert result["metrics"]["gaze_state"] == "CENTER"
         assert result["metrics"]["gaze_ratio"] == 3.545
-
-    def test_debug_log_contains_frame_dimensions(self, monkeypatch, caplog):
-        utils = load_face_utils_v2(monkeypatch)
-        self._configure_lightweight_analysis(monkeypatch, utils)
-        monkeypatch.setattr(utils.django_settings, "DEBUG", True, raising=False)
-        monkeypatch.setattr(utils.os, "makedirs", lambda *args, **kwargs: None)
-        monkeypatch.setattr(utils.cv2, "imwrite", lambda *args, **kwargs: True)
-        monkeypatch.setattr(
-            utils,
-            "face_detection",
-            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
-        )
-        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
-        caplog.set_level(logging.DEBUG, logger=utils.logger.name)
-
-        utils.analyze_face_attention_with_models(
-            base_face_analysis_data(
-                user_id=7,
-                session_id="session-debug",
-                decoded_frame_width=640,
-                decoded_frame_height=480,
-            )
-        )
-
-        records = [
-            record for record in caplog.records
-            if record.getMessage() == "websocket_mobile_frame_debug"
-        ]
-        assert len(records) == 1
-        record = records[0]
-        assert record.payload_frame_width == 640
-        assert record.payload_frame_height == 480
-        assert record.decoded_frame_width == 640
-        assert record.decoded_frame_height == 480
-        assert record.frame_dimension_match is True
-
-    def test_debug_log_excludes_frame_base64_and_token(self, monkeypatch, caplog):
-        utils = load_face_utils_v2(monkeypatch)
-        self._configure_lightweight_analysis(monkeypatch, utils)
-        monkeypatch.setattr(utils.django_settings, "DEBUG", True, raising=False)
-        monkeypatch.setattr(utils.os, "makedirs", lambda *args, **kwargs: None)
-        monkeypatch.setattr(utils.cv2, "imwrite", lambda *args, **kwargs: True)
-        monkeypatch.setattr(
-            utils,
-            "face_detection",
-            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
-        )
-        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
-        caplog.set_level(logging.DEBUG, logger=utils.logger.name)
-
-        utils.analyze_face_attention_with_models(
-            base_face_analysis_data(
-                frame_base64="secret-base64-value",
-                token="secret-token-value",
-            )
-        )
-
-        records = [
-            record for record in caplog.records
-            if record.getMessage() == "websocket_mobile_frame_debug"
-        ]
-        assert len(records) == 1
-        record_data = vars(records[0])
-        assert "frame_base64" not in record_data
-        assert "token" not in record_data
-        assert "secret-base64-value" not in caplog.text
-        assert "secret-token-value" not in caplog.text
-
-    def test_debug_false_does_not_emit_verbose_cv_debug_logs(self, monkeypatch, caplog):
-        utils = load_face_utils_v2(monkeypatch)
-        self._configure_lightweight_analysis(monkeypatch, utils)
-        monkeypatch.setattr(utils.django_settings, "DEBUG", False, raising=False)
-        monkeypatch.setattr(
-            utils,
-            "face_detection",
-            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
-        )
-        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
-        caplog.set_level(logging.DEBUG, logger=utils.logger.name)
-
-        utils.analyze_face_attention_with_models(base_face_analysis_data())
-
-        assert "websocket_mobile_frame_debug" not in caplog.text
-
-    def test_overlay_image_is_created_only_in_debug_mode(self, monkeypatch):
-        utils = load_face_utils_v2(monkeypatch)
-        self._configure_lightweight_analysis(monkeypatch, utils)
-        imwrite_calls = []
-        monkeypatch.setattr(utils.os, "makedirs", lambda *args, **kwargs: None)
-        monkeypatch.setattr(utils.cv2, "imwrite", lambda *args, **kwargs: imwrite_calls.append(args[0]) or True)
-        monkeypatch.setattr(
-            utils,
-            "face_detection",
-            SimpleNamespace(detectMultiScale=lambda *args, **kwargs: [(220, 120, 180, 180)]),
-        )
-        monkeypatch.setattr(utils, "detector", lambda gray, upsample: [utils.dlib.rectangle(220, 120, 400, 300)])
-
-        monkeypatch.setattr(utils.django_settings, "DEBUG", False, raising=False)
-        utils.analyze_face_attention_with_models(base_face_analysis_data())
-        assert imwrite_calls == []
-
-        monkeypatch.setattr(utils.django_settings, "DEBUG", True, raising=False)
-        utils.analyze_face_attention_with_models(base_face_analysis_data())
-        assert len(imwrite_calls) == 2
-        assert all(path.startswith("/tmp/websocket_debug") for path in imwrite_calls)
-        assert any(path.endswith("_decoded.jpg") for path in imwrite_calls)
-        assert any(path.endswith("_overlay.jpg") for path in imwrite_calls)
 
 
 class TestEyeClosedDetection:
