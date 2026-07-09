@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone as datetime_timezone
 from urllib.parse import urlparse
 
@@ -16,6 +17,9 @@ from apps.payments.models import (
     Subscription,
     SubscriptionStatus,
 )
+
+logger = logging.getLogger(__name__)
+
 
 SUPPORTED_WEBHOOK_EVENTS = {
     'checkout.session.completed',
@@ -168,6 +172,7 @@ def _upsert_subscription(subscription, fallback_user=None):
     stripe_customer_id = _get_value(subscription, 'customer')
     stripe_subscription_id = _get_value(subscription, 'id')
     if not stripe_subscription_id:
+        logger.warning('Stripe subscription event missing subscription id')
         return None
 
     user = fallback_user or _find_user_from_customer_or_metadata(
@@ -175,9 +180,12 @@ def _upsert_subscription(subscription, fallback_user=None):
         metadata=_get_value(subscription, 'metadata', {}),
     )
     if not user:
+        logger.warning('Unable to map Stripe subscription to user', extra={'stripe_subscription_id': stripe_subscription_id})
         return None
 
     status = _get_value(subscription, 'status') or SubscriptionStatus.INCOMPLETE
+    if status not in SubscriptionStatus.values:
+        logger.warning('Unknown Stripe subscription status', extra={'status': status})
 
     subscription_record, _ = Subscription.objects.update_or_create(
         user=user,
@@ -203,6 +211,7 @@ def _handle_checkout_session_completed(session):
         metadata=_get_value(session, 'metadata', {}),
     )
     if not user:
+        logger.warning('Unable to map checkout session to user', extra={'session_id': _get_value(session, 'id')})
         return
 
     StripeCustomer.objects.update_or_create(
@@ -232,6 +241,7 @@ def _handle_invoice(invoice):
         stripe_customer_id=_get_value(invoice, 'customer'),
     )
     if not user:
+        logger.warning('Unable to map invoice to user', extra={'invoice_id': _get_value(invoice, 'id')})
         return
 
     PaymentInvoice.objects.update_or_create(
@@ -266,6 +276,7 @@ def process_webhook_event(event):
         },
     )
     if not created and webhook_event.processed:
+        logger.info('Duplicate Stripe webhook ignored', extra={'stripe_event_id': stripe_event_id})
         return {'duplicate': True}
 
     webhook_event.event_type = event_type
@@ -274,7 +285,7 @@ def process_webhook_event(event):
 
     try:
         if event_type not in SUPPORTED_WEBHOOK_EVENTS:
-            pass
+            logger.info('Unsupported Stripe webhook ignored', extra={'event_type': event_type})
         elif event_type == 'checkout.session.completed':
             _handle_checkout_session_completed(data_object)
         elif event_type in {'customer.subscription.created', 'customer.subscription.updated'}:
@@ -285,6 +296,7 @@ def process_webhook_event(event):
             _handle_invoice(data_object)
         webhook_event.mark_processed()
     except Exception as exc:
+        logger.exception('Stripe webhook processing failed', extra={'stripe_event_id': stripe_event_id})
         webhook_event.mark_failed(str(exc))
         raise
 

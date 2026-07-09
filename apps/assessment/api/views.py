@@ -8,7 +8,9 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from helpers.custom_messages import _success
 import  os,sys
+import logging
 
+logger = logging.getLogger(__name__)
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
 from apps.assessment.selectors import get_active_questions_for_user_type
 from helpers.custom_messages import _success,_record_not_found
