@@ -40,6 +40,8 @@ class SelfAssessmentResult(models.Model):
     visual_tracking_total   = models.FloatField(_('VT Total Score'), default=0, null=True, blank=True)
     audio_listening_total   = models.FloatField(_('AL Total Score'), default=0, null=True, blank=True)
     program_duration        = models.IntegerField(_('Program Duration'), default=0, null=True, blank=True)
+    created_at              = models.DateTimeField(_('Created At'), auto_now_add=True, null=True)
+    completed_at            = models.DateTimeField(_('Completed At'), null=True, blank=True)
 
     def __str__(self):
         return f"Response by {self.user.username} for {self.result}"
@@ -50,6 +52,7 @@ class SelfAssessmentResult(models.Model):
         db_table              = 'SelfAssessmentResult'
         indexes = [
             models.Index(fields=['user', '-id']),
+            models.Index(fields=['user', '-completed_at'], name='assessment_user_completed_idx'),
         ]
 
 

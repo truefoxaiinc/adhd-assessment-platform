@@ -23,10 +23,14 @@ class SelfAssessmentQuestionsListSchema(serializers.ModelSerializer):
 
 class SelfAssessmentResultSchema(serializers.ModelSerializer):
     user = serializers.CharField(source='user.username',allow_null=True)
+    is_completed = serializers.SerializerMethodField()
 
     class Meta:
         model = SelfAssessmentResult
-        fields = ['id','user','result','raw_total','tenscore','read_focus_total','visual_tracking_total','audio_listening_total','program_duration']
+        fields = ['id','user','result','raw_total','tenscore','read_focus_total','visual_tracking_total','audio_listening_total','program_duration','is_completed','created_at','completed_at']
+
+    def get_is_completed(self, instance):
+        return instance.completed_at is not None
 
 
     def to_representation(self, instance):

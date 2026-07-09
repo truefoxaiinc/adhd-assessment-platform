@@ -139,6 +139,7 @@ class ResultFetchApiView(generics.GenericAPIView):
                     'program_duration',
                 )
                 .filter(user=user_instance)
+                .filter(completed_at__isnull=False)
                 .order_by('-id')
                 .first()
             )
@@ -152,6 +153,46 @@ class ResultFetchApiView(generics.GenericAPIView):
             cache_set(cache_key, self.response_format)
             return Response(self.response_format, status=status.HTTP_200_OK)
 
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+
+class ResultHistoryApiView(generics.GenericAPIView):
+    """List every completed assessment attempt for the authenticated user."""
+
+    serializer_class = SelfAssessmentResultSchema
+    permission_classes = (IsAuthenticated,)
+    filter_backends = []
+
+    @swagger_auto_schema(
+        tags=["Self Assessment"],
+        operation_id='Self Assessment Result History',
+        operation_description="Fetch all completed self-assessment scores for the authenticated user, newest first.",
+    )
+    def get(self, request):
+        try:
+            user_instance = get_token_user_or_none(request)
+            queryset = (
+                SelfAssessmentResult.objects
+                .select_related('user')
+                .filter(user=user_instance, completed_at__isnull=False)
+                .order_by('-completed_at', '-id')
+            )
+            data = self.serializer_class(
+                queryset,
+                many=True,
+                context={'request': request},
+            ).data
+
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_200_OK
+            response_format["message"] = _success
+            response_format["status"] = True
+            response_format["data"] = {
+                "count": len(data),
+                "results": data,
+            }
+            return Response(response_format, status=status.HTTP_200_OK)
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
         
