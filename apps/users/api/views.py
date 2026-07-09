@@ -41,8 +41,11 @@ from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 import requests
+import logging
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
+
+logger = logging.getLogger(__name__)
 
 
 class UserRegistrationApiView(generics.GenericAPIView):

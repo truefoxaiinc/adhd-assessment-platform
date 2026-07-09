@@ -2,8 +2,6 @@ import numpy as np
 from datetime import datetime
 import time
 
-
-
 class FaceDetectionAI:
     def __init__(self):
         """Initialize the Face Detection AI for dimensions-based validation"""
@@ -107,6 +105,7 @@ class FaceDetectionAI:
             return result
             
         except Exception as e:
+            print(f"Face dimensions validation error: {e}")
             return {
                 'timestamp': datetime.now().isoformat(),
                 'face_count': 0,
@@ -354,8 +353,8 @@ class FaceDetectionAI:
             if len(self.detection_history) > self.max_history:
                 self.detection_history = self.detection_history[-self.max_history:]
                 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"History update error: {e}")
     
     def _get_processing_time(self):
         """Get processing time since last detection"""
@@ -399,6 +398,7 @@ class FaceDetectionAI:
             }
             
         except Exception as e:
+            print(f"Stats calculation error: {e}")
             return {
                 'total_detections': 0,
                 'success_rate': 0,

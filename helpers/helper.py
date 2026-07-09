@@ -1,4 +1,7 @@
+import  logging
 from django.contrib.auth import get_user_model
+
+logger = logging.getLogger(__name__)
 
 
 def get_object_or_none(classmodel, **kwargs):

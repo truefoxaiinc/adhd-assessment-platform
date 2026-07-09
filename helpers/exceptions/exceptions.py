@@ -1,3 +1,5 @@
+import logging
+
 from django.http import JsonResponse
 from rest_framework import status
 from rest_framework.exceptions import (
@@ -12,6 +14,10 @@ from rest_framework.exceptions import (
 )
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
+
+
+logger = logging.getLogger(__name__)
+
 
 def get_response(message="", result=None, status=False, status_code=200):
     return {
@@ -97,6 +103,13 @@ def get_safe_error_message(exc, error_data, status_code):
 
 
 def safe_exception_response(exc, *, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, context=None):
+    logger.exception(
+        "Unhandled API exception",
+        extra={
+            "status_code": status_code,
+            "view": context.get("view").__class__.__name__ if context and context.get("view") else None,
+        },
+    )
     return Response(
         get_safe_error_response("Internal server error", "INTERNAL_ERROR"),
         status=status_code,
