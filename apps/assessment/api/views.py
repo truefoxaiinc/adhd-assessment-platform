@@ -216,8 +216,9 @@ class AIAssessmentScoreHistoryApiView(generics.GenericAPIView):
     def get(self, request):
         try:
             is_assessment = request.query_params.get('is_assessment')
+            user_instance = get_token_user_or_none(request)
             queryset = FaceAttentionSession.objects.filter(
-                user=request.user
+                user_id=user_instance.id
             ).order_by('-created_at', '-id')
 
             if is_assessment not in (None, ''):
