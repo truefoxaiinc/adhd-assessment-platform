@@ -36,6 +36,18 @@ class FaceAttentionSession(models.Model):
     session_duration_seconds = models.FloatField(default=0.0)
     created_at            = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=['user', '-created_at'],
+                name='face_session_user_created_idx',
+            ),
+            models.Index(
+                fields=['user', '-average_concentration_score'],
+                name='face_session_user_score_idx',
+            ),
+        ]
+
 class UserAssessmentDetails(models.Model):
     user              = models.ForeignKey(Users, on_delete=models.CASCADE)
     course_duration   = models.IntegerField(_('Course Duration Days'),blank = True, null = True)

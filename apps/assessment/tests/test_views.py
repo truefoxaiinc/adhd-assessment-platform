@@ -6,6 +6,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from apps.users.models import Users
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse
+from apps.progresstracker.models import FaceAttentionSession
 
 @pytest.fixture
 def api_client():
@@ -39,7 +40,7 @@ def questions():
 
 @pytest.mark.django_db
 class TestAssessmentViews:
-    SCORE_URL = '/api/assessment/v1/self-assessment/scores'
+    SCORE_URL = '/api/assessment/v1/ai-attention/scores'
 
     def test_get_questions_adult(self, api_client, user, questions):
         api_client.force_authenticate(user=user)
@@ -93,15 +94,17 @@ class TestAssessmentViews:
     def test_score_list_is_user_scoped_and_paginated(self, api_client, user, child_user):
         api_client.force_authenticate(user=user)
         for index in range(3):
-            SelfAssessmentResult.objects.create(
+            FaceAttentionSession.objects.create(
                 user=user,
-                result=f'Risk {index}',
-                tenscore=index + 1,
+                session_id=f'user-session-{index}',
+                concentration_score=index + 1,
+                average_concentration_score=index + 1,
             )
-        SelfAssessmentResult.objects.create(
+        FaceAttentionSession.objects.create(
             user=child_user,
-            result='Other user result',
-            tenscore=10,
+            session_id='other-user-session',
+            concentration_score=8,
+            average_concentration_score=8,
         )
 
         response = api_client.get(self.SCORE_URL, {'limit': 2})
@@ -110,33 +113,43 @@ class TestAssessmentViews:
         assert response.data['data']['count'] == 3
         assert len(response.data['data']['results']) == 2
         assert all(
-            row['user'] == user.username
+            row['session_id'].startswith('user-session-')
             for row in response.data['data']['results']
         )
 
     def test_score_list_search_filter_and_sort(self, api_client, user):
         api_client.force_authenticate(user=user)
-        SelfAssessmentResult.objects.create(
+        FaceAttentionSession.objects.create(
             user=user,
-            result='Low Risk',
-            tenscore=2,
+            session_id='reading-low',
+            concentration_score=2,
+            average_concentration_score=2,
+            gaze_state='CENTER',
+            face_detected=True,
         )
-        SelfAssessmentResult.objects.create(
+        FaceAttentionSession.objects.create(
             user=user,
-            result='High Risk',
-            tenscore=8,
+            session_id='reading-high',
+            concentration_score=8,
+            average_concentration_score=8,
+            gaze_state='LEFT',
+            face_detected=True,
         )
-        SelfAssessmentResult.objects.create(
+        FaceAttentionSession.objects.create(
             user=user,
-            result='High Risk',
-            tenscore=6,
+            session_id='reading-medium',
+            concentration_score=6,
+            average_concentration_score=6,
+            gaze_state='CENTER',
+            face_detected=True,
         )
 
         response = api_client.get(
             self.SCORE_URL,
             {
-                'search': 'high',
-                'result': 'High Risk',
+                'search': 'reading',
+                'gaze_state': 'CENTER',
+                'face_detected': 'true',
                 'min_score': 5,
                 'max_score': 8,
                 'sort': 'score',
@@ -145,8 +158,8 @@ class TestAssessmentViews:
 
         assert response.status_code == status.HTTP_200_OK
         assert [
-            row['tenscore'] for row in response.data['data']['results']
-        ] == [6.0, 8.0]
+            row['attention_score'] for row in response.data['data']['results']
+        ] == [75.0]
 
     def test_score_list_rejects_invalid_filters(self, api_client, user):
         api_client.force_authenticate(user=user)
@@ -160,10 +173,11 @@ class TestAssessmentViews:
     def test_score_list_cache_avoids_repeat_database_queries(self, api_client, user):
         cache.clear()
         api_client.force_authenticate(user=user)
-        SelfAssessmentResult.objects.create(
+        FaceAttentionSession.objects.create(
             user=user,
-            result='High Risk',
-            tenscore=8,
+            session_id='cached-session',
+            concentration_score=8,
+            average_concentration_score=8,
         )
 
         with CaptureQueriesContext(connection) as first_queries:

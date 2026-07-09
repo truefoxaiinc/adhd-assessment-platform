@@ -15,6 +15,8 @@ from django.db.models import Q
 from drf_yasg import openapi
 from rest_framework.pagination import PageNumberPagination
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
+from apps.progresstracker.models import FaceAttentionSession
+from apps.progresstracker.schemas import FaceAttentionSessionSchema
 from apps.assessment.selectors import get_active_questions_for_user_type
 from helpers.custom_messages import _success,_record_not_found
 from apps.assessment.services.scoring_service import ScoringService
@@ -174,64 +176,108 @@ class ResultFetchApiView(generics.GenericAPIView):
 
 
 class AssessmentScoreListApiView(generics.GenericAPIView):
-    serializer_class = SelfAssessmentResultSchema
+    serializer_class = FaceAttentionSessionSchema
     permission_classes = (IsAuthenticated,)
     pagination_class = AssessmentScorePagination
 
     SORT_FIELDS = {
         'id': 'id',
-        'score': 'tenscore',
-        'tenscore': 'tenscore',
-        'raw_total': 'raw_total',
-        'program_duration': 'program_duration',
+        'score': 'average_concentration_score',
+        'attention_score': 'average_concentration_score',
+        'engagement': 'attention_engagement_rate',
+        'duration': 'session_duration_seconds',
+        'created_at': 'created_at',
     }
 
     def get_queryset(self):
         queryset = (
-            SelfAssessmentResult.objects
+            FaceAttentionSession.objects
             .filter(user_id=self.request.user.id)
-            .select_related('user')
             .only(
                 'id',
                 'user_id',
-                'user__username',
-                'result',
-                'raw_total',
-                'tenscore',
-                'read_focus_total',
-                'visual_tracking_total',
-                'audio_listening_total',
-                'program_duration',
+                'session_id',
+                'concentration_score',
+                'gaze_ratio_avg',
+                'inattention_duration',
+                'drowsy_state',
+                'face_detected',
+                'video_attentive',
+                'eyes_closed',
+                'yawning',
+                'gaze_state',
+                'head_pose_ok',
+                'low_light',
+                'brightness_score',
+                'pitch',
+                'yaw',
+                'roll',
+                'blink_ratio',
+                'yawn_distance',
+                'attention_engagement_rate',
+                'total_processed_frames',
+                'sampled_frames',
+                'average_confidence',
+                'average_concentration_score',
+                'bad_frame_count',
+                'blurry_frame_count',
+                'low_light_frame_count',
+                'eyes_closed_count',
+                'gaze_warning_count',
+                'session_duration_seconds',
+                'created_at',
             )
         )
 
         search = self.request.query_params.get('search', '').strip()
-        result_filter = self.request.query_params.get('result', '').strip()
+        gaze_state = self.request.query_params.get('gaze_state', '').strip()
         min_score = self.request.query_params.get('min_score')
         max_score = self.request.query_params.get('max_score')
 
         if search:
-            search_query = Q(result__icontains=search)
+            search_query = (
+                Q(session_id__icontains=search)
+                | Q(gaze_state__icontains=search)
+            )
             try:
                 numeric_search = float(search)
             except (TypeError, ValueError):
                 pass
             else:
-                search_query |= Q(tenscore=numeric_search)
+                search_query |= Q(
+                    average_concentration_score=numeric_search
+                )
             queryset = queryset.filter(search_query)
 
-        if result_filter:
-            queryset = queryset.filter(result__iexact=result_filter)
+        if gaze_state:
+            queryset = queryset.filter(gaze_state__iexact=gaze_state)
+
+        for field in ('face_detected', 'yawning', 'eyes_closed', 'low_light'):
+            value = self.request.query_params.get(field)
+            if value in (None, ''):
+                continue
+            normalized_value = value.lower()
+            if normalized_value not in ('true', 'false', '1', '0'):
+                raise ValidationError({
+                    field: 'Use true, false, 1, or 0.'
+                })
+            queryset = queryset.filter(
+                **{field: normalized_value in ('true', '1')}
+            )
 
         try:
             parsed_min_score = None
             parsed_max_score = None
             if min_score not in (None, ''):
                 parsed_min_score = float(min_score)
-                queryset = queryset.filter(tenscore__gte=parsed_min_score)
+                queryset = queryset.filter(
+                    average_concentration_score__gte=parsed_min_score
+                )
             if max_score not in (None, ''):
                 parsed_max_score = float(max_score)
-                queryset = queryset.filter(tenscore__lte=parsed_max_score)
+                queryset = queryset.filter(
+                    average_concentration_score__lte=parsed_max_score
+                )
         except (TypeError, ValueError) as exc:
             raise ValidationError(
                 {'score': 'min_score and max_score must be valid numbers.'}
@@ -248,7 +294,7 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
         requested_sort = (
             self.request.query_params.get('sort')
             or self.request.query_params.get('ordering')
-            or '-id'
+            or '-created_at'
         )
         descending = requested_sort.startswith('-')
         sort_name = requested_sort.lstrip('-')
@@ -256,8 +302,8 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
         if sort_field is None:
             raise ValidationError({
                 'sort': (
-                    'Invalid sort field. Use id, score, tenscore, raw_total, '
-                    'or program_duration.'
+                    'Invalid sort field. Use id, score, attention_score, '
+                    'engagement, duration, or created_at.'
                 )
             })
 
@@ -267,24 +313,29 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
         return queryset.order_by(ordering, '-id')
 
     @swagger_auto_schema(
-        tags=["Self Assessment"],
-        operation_id='authenticated-user-score-list',
+        tags=["AI Attention Assessment"],
+        operation_id='authenticated-user-ai-attention-score-list',
         operation_description=(
-            "List the authenticated user's assessment scores with pagination, "
-            "search, filters, sorting, and cache-backed responses."
+            "List the authenticated user's AI attention sessions with pagination, "
+            "search, filters, sorting, and cache-backed responses. Score filters "
+            "use the raw 0-8 concentration scale."
         ),
         manual_parameters=[
             openapi.Parameter('page', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
             openapi.Parameter('limit', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
             openapi.Parameter('search', openapi.IN_QUERY, type=openapi.TYPE_STRING),
-            openapi.Parameter('result', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+            openapi.Parameter('gaze_state', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+            openapi.Parameter('face_detected', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN),
+            openapi.Parameter('yawning', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN),
+            openapi.Parameter('eyes_closed', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN),
+            openapi.Parameter('low_light', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN),
             openapi.Parameter('min_score', openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
             openapi.Parameter('max_score', openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
             openapi.Parameter(
                 'sort',
                 openapi.IN_QUERY,
                 description=(
-                    'id, score, tenscore, raw_total, or program_duration; '
+                    'id, score, attention_score, engagement, duration, or created_at; '
                     'prefix with - for descending.'
                 ),
                 type=openapi.TYPE_STRING,

@@ -7,6 +7,7 @@ from django.core.cache import cache
 ASSESSMENT_CACHE_TIMEOUT = 60 * 15
 QUESTIONS_CACHE_VERSION_KEY = 'assessment:questions:version'
 RESULT_CACHE_VERSION_KEY_TEMPLATE = 'assessment:result:user:{user_id}:version'
+AI_SCORE_CACHE_VERSION_KEY_TEMPLATE = 'assessment:ai-scores:user:{user_id}:version'
 
 
 def cache_get(key, default=None):
@@ -49,7 +50,7 @@ def get_result_cache_key(user_id):
 
 
 def get_score_list_cache_key(user_id, request):
-    version_key = RESULT_CACHE_VERSION_KEY_TEMPLATE.format(user_id=user_id)
+    version_key = AI_SCORE_CACHE_VERSION_KEY_TEMPLATE.format(user_id=user_id)
     version = cache_get(version_key, 1)
     normalized_params = {
         key: request.query_params.getlist(key)
@@ -58,7 +59,7 @@ def get_score_list_cache_key(user_id, request):
     params_hash = hashlib.md5(
         json.dumps(normalized_params, sort_keys=True).encode()
     ).hexdigest()
-    return f'assessment:scores:user:{user_id}:v{version}:{params_hash}'
+    return f'assessment:ai-scores:user:{user_id}:v{version}:{params_hash}'
 
 
 def get_progress_cache_key(user_id, is_for_adults):
@@ -71,3 +72,8 @@ def get_progress_cache_key(user_id, is_for_adults):
 def bump_user_result_cache(user_id):
     if user_id:
         bump_cache_version(RESULT_CACHE_VERSION_KEY_TEMPLATE.format(user_id=user_id))
+
+
+def bump_user_ai_score_cache(user_id):
+    if user_id:
+        bump_cache_version(AI_SCORE_CACHE_VERSION_KEY_TEMPLATE.format(user_id=user_id))

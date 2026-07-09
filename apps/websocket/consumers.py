@@ -1034,6 +1034,12 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
                 session_id=session_id,
                 defaults=defaults,
             )
+        self._invalidate_ai_score_cache(user_id)
+
+    @staticmethod
+    def _invalidate_ai_score_cache(user_id):
+        from apps.assessment.cache import bump_user_ai_score_cache
+        bump_user_ai_score_cache(user_id)
 
     def _build_session_aggregate(self):
         totals = self.session_metric_totals
