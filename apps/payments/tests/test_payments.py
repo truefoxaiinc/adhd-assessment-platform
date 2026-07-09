@@ -61,6 +61,16 @@ def test_unauthenticated_checkout_blocked(client):
     assert response.status_code in (401, 403)
 
 
+def test_payment_result_pages_are_public(client):
+    success_response = client.get('/payment/success/')
+    cancel_response = client.get('/payment/cancel/')
+
+    assert success_response.status_code == 200
+    assert b'Payment successful' in success_response.content
+    assert cancel_response.status_code == 200
+    assert b'Payment cancelled' in cancel_response.content
+
+
 @pytest.mark.django_db
 def test_subscription_status_api(authed_client, user):
     Subscription.objects.create(

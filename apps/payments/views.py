@@ -1,4 +1,5 @@
 from django.core.exceptions import ImproperlyConfigured
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -21,6 +22,30 @@ from apps.payments.services import (
 from helpers.exceptions.exceptions import safe_exception_response
 from helpers.helper import get_token_user_or_none
 from helpers.response import ResponseInfo
+
+
+def payment_success_page(request):
+    return render(
+        request,
+        'payments/payment_result.html',
+        {
+            'is_success': True,
+            'title': 'Payment successful',
+            'message': 'Your payment was completed. You can now return to the ADHD Minder app.',
+        },
+    )
+
+
+def payment_cancel_page(request):
+    return render(
+        request,
+        'payments/payment_result.html',
+        {
+            'is_success': False,
+            'title': 'Payment cancelled',
+            'message': 'No payment was completed. You can return to the ADHD Minder app and try again.',
+        },
+    )
 
 
 class CreateCheckoutSessionApiView(APIView):

@@ -25,6 +25,7 @@ from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
 from django.views.generic import RedirectView
+from apps.payments import views as payment_views
 
 
 admin.site.site_header = "ADHD Minder Admin"
@@ -47,6 +48,8 @@ schema_view             = get_schema_view(
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', RedirectView.as_view(url='/api/docs'), name='redirect'),
+    path('payment/success/', payment_views.payment_success_page, name='payment-success'),
+    path('payment/cancel/', payment_views.payment_cancel_page, name='payment-cancel'),
 
     re_path(r'^api/', include([
         path('auth/',include('apps.authentication.urls')),
