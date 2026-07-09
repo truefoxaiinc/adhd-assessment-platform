@@ -11,6 +11,7 @@ class FaceAttentionSessionSchema(serializers.ModelSerializer):
         fields = [
             'id',
             'session_id',
+            'is_assessment',
             'attention_score',
             'concentration_score',
             'average_concentration_score',

@@ -1172,8 +1172,20 @@ class TestAggregateSessionMetrics:
         assert manager.create_calls == []
         assert atomic_calls == ["enter", "exit"]
         row = next(iter(manager.rows.values()))
+        assert row["is_assessment"] is False
         assert row["total_processed_frames"] == 2
         assert row["sampled_frames"] == 2
+
+    def test_assessment_flag_is_saved_with_session(self, monkeypatch):
+        manager = install_fake_face_attention_model(monkeypatch)
+        monkeypatch.setattr("django.db.transaction.atomic", lambda: FakeAtomic([]))
+        consumer = self.setup_consumer()
+        consumer.is_assessment = True
+        consumer._record_session_metric(aggregate_metric())
+
+        self.persist_sync(consumer)
+
+        assert manager.rows[(1, "session-1")]["is_assessment"] is True
 
     def test_repeated_endcall_does_not_duplicate_rows(self, monkeypatch):
         manager = install_fake_face_attention_model(monkeypatch)

@@ -6,6 +6,7 @@ from apps.users.models import Users
 class FaceAttentionSession(models.Model):
     user                  = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='attention_sessions')
     session_id            = models.CharField(max_length=100)
+    is_assessment         = models.BooleanField(default=False)
     concentration_score   = models.FloatField()
     gaze_ratio_avg        = models.FloatField(default=1.0)
     inattention_duration  = models.FloatField(default=0.0)

@@ -103,6 +103,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.frame_count = 0
         self.last_response_data = None
         self.assessment_score_saved = False
+        self.is_assessment = False
         self.last_attention_state = "idle_distracted"
         self.last_processed_frame_at = None
         self.inference_running = False
@@ -135,6 +136,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         self.frame_count = 0
         self.last_response_data = None
         self.assessment_score_saved = False
+        self.is_assessment = False
         self.last_attention_state = "idle_distracted"
         self.last_processed_frame_at = None
         self.inference_running = False
@@ -308,7 +310,8 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
             frame_data = data.get('frame', {'width': self.frame_width, 'height': self.frame_height})
             frame_base64 = data.get('frame_base64')
             request_frame_id = data.get('frame_id')
-            is_assessment = data.get('is_assessment', False)
+            is_assessment = data.get('is_assessment') is True
+            self.is_assessment = self.is_assessment or is_assessment
             mode = data.get('mode', 'video')
             pdf_is_visible = data.get('pdf_is_visible', False)
 
@@ -1007,6 +1010,7 @@ class FaceDetectionConsumer(AsyncWebsocketConsumer):
         aggregate = self._build_session_aggregate()
         latest_metric = metrics[-1] if metrics else {}
         defaults = {
+            'is_assessment': self.is_assessment,
             'concentration_score': aggregate['average_concentration_score'],
             'gaze_ratio_avg': summary.get('avg_gaze_ratio', 0.0),
             'inattention_duration': summary.get('max_inattention_duration', 0.0),

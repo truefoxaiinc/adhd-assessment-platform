@@ -11,7 +11,7 @@ import  os,sys
 import logging
 
 logger = logging.getLogger(__name__)
-from django.db.models import Q
+from django.db.models import Count, Q
 from drf_yasg import openapi
 from rest_framework.pagination import PageNumberPagination
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
@@ -197,6 +197,7 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
                 'id',
                 'user_id',
                 'session_id',
+                'is_assessment',
                 'concentration_score',
                 'gaze_ratio_avg',
                 'inattention_duration',
@@ -252,7 +253,13 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
         if gaze_state:
             queryset = queryset.filter(gaze_state__iexact=gaze_state)
 
-        for field in ('face_detected', 'yawning', 'eyes_closed', 'low_light'):
+        for field in (
+            'is_assessment',
+            'face_detected',
+            'yawning',
+            'eyes_closed',
+            'low_light',
+        ):
             value = self.request.query_params.get(field)
             if value in (None, ''):
                 continue
@@ -325,6 +332,7 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
             openapi.Parameter('limit', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
             openapi.Parameter('search', openapi.IN_QUERY, type=openapi.TYPE_STRING),
             openapi.Parameter('gaze_state', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+            openapi.Parameter('is_assessment', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN),
             openapi.Parameter('face_detected', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN),
             openapi.Parameter('yawning', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN),
             openapi.Parameter('eyes_closed', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN),
@@ -349,6 +357,20 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
             if cached_data is not None:
                 return Response(cached_data, status=status.HTTP_200_OK)
 
+            summary = FaceAttentionSession.objects.filter(
+                user_id=request.user.id
+            ).aggregate(
+                total_sessions=Count('id'),
+                total_assessments=Count(
+                    'id',
+                    filter=Q(is_assessment=True),
+                ),
+                total_management=Count(
+                    'id',
+                    filter=Q(is_assessment=False),
+                ),
+            )
+
             page = self.paginate_queryset(self.get_queryset())
             data = self.serializer_class(
                 page,
@@ -361,6 +383,9 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
                 'message': _success,
                 'data': {
                     'count': self.paginator.page.paginator.count,
+                    'total_sessions': summary['total_sessions'],
+                    'total_assessments': summary['total_assessments'],
+                    'total_management': summary['total_management'],
                     'next': self.paginator.get_next_link(),
                     'previous': self.paginator.get_previous_link(),
                     'results': data,

@@ -97,6 +97,7 @@ class TestAssessmentViews:
             FaceAttentionSession.objects.create(
                 user=user,
                 session_id=f'user-session-{index}',
+                is_assessment=index % 2 == 0,
                 concentration_score=index + 1,
                 average_concentration_score=index + 1,
             )
@@ -105,6 +106,7 @@ class TestAssessmentViews:
             session_id='other-user-session',
             concentration_score=8,
             average_concentration_score=8,
+            is_assessment=True,
         )
 
         response = api_client.get(self.SCORE_URL, {'limit': 2})
@@ -112,6 +114,9 @@ class TestAssessmentViews:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['data']['count'] == 3
         assert len(response.data['data']['results']) == 2
+        assert response.data['data']['total_sessions'] == 3
+        assert response.data['data']['total_assessments'] == 2
+        assert response.data['data']['total_management'] == 1
         assert all(
             row['session_id'].startswith('user-session-')
             for row in response.data['data']['results']
@@ -124,6 +129,7 @@ class TestAssessmentViews:
             session_id='reading-low',
             concentration_score=2,
             average_concentration_score=2,
+            is_assessment=False,
             gaze_state='CENTER',
             face_detected=True,
         )
@@ -132,6 +138,7 @@ class TestAssessmentViews:
             session_id='reading-high',
             concentration_score=8,
             average_concentration_score=8,
+            is_assessment=True,
             gaze_state='LEFT',
             face_detected=True,
         )
@@ -140,6 +147,7 @@ class TestAssessmentViews:
             session_id='reading-medium',
             concentration_score=6,
             average_concentration_score=6,
+            is_assessment=True,
             gaze_state='CENTER',
             face_detected=True,
         )
@@ -150,6 +158,7 @@ class TestAssessmentViews:
                 'search': 'reading',
                 'gaze_state': 'CENTER',
                 'face_detected': 'true',
+                'is_assessment': 'true',
                 'min_score': 5,
                 'max_score': 8,
                 'sort': 'score',
@@ -160,6 +169,7 @@ class TestAssessmentViews:
         assert [
             row['attention_score'] for row in response.data['data']['results']
         ] == [75.0]
+        assert response.data['data']['results'][0]['is_assessment'] is True
 
     def test_score_list_rejects_invalid_filters(self, api_client, user):
         api_client.force_authenticate(user=user)
@@ -187,5 +197,5 @@ class TestAssessmentViews:
 
         assert first_response.status_code == status.HTTP_200_OK
         assert cached_response.data == first_response.data
-        assert len(first_queries) <= 2
+        assert len(first_queries) <= 3
         assert len(cached_queries) == 0
