@@ -41,6 +41,7 @@ def questions():
 @pytest.mark.django_db
 class TestAssessmentViews:
     SCORE_URL = '/api/assessment/v1/ai-attention/scores'
+    COMBINED_RESULTS_URL = '/api/assessment/v1/self-assessment/results'
 
     def test_get_questions_adult(self, api_client, user, questions):
         api_client.force_authenticate(user=user)
@@ -78,6 +79,103 @@ class TestAssessmentViews:
         # It might require result_entry. We just assert it doesn't 500
         assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_400_BAD_REQUEST]
 
+    def test_completed_assessment_retake_is_saved_separately(
+        self,
+        api_client,
+        user,
+        questions,
+        monkeypatch,
+    ):
+        api_client.force_authenticate(user=user)
+        url = '/api/assessment/v1/self-assessment/save-response'
+
+        def calculate_result(instance, is_adult):
+            instance.result = 'Completed'
+            instance.raw_total = instance.id
+            instance.tenscore = float(instance.id)
+            instance.save(
+                update_fields=['result', 'raw_total', 'tenscore']
+            )
+            return instance
+
+        monkeypatch.setattr(
+            'apps.assessment.api.serializers.AssessmentService.calculate_result',
+            calculate_result,
+        )
+        answers = [{
+            'question': questions[0].id,
+            'response': '2',
+        }]
+
+        first_response = api_client.post(
+            url,
+            {'assesment': answers},
+            format='json',
+        )
+        retry_response = api_client.post(
+            url,
+            {'assesment': answers},
+            format='json',
+        )
+        retake_response = api_client.post(
+            url,
+            {'assesment': answers, 'retake': True},
+            format='json',
+        )
+
+        assert first_response.status_code == status.HTTP_201_CREATED
+        assert retry_response.status_code == status.HTTP_201_CREATED
+        assert retake_response.status_code == status.HTTP_201_CREATED
+        results = list(
+            SelfAssessmentResult.objects
+            .filter(user=user)
+            .order_by('id')
+        )
+        assert len(results) == 2
+        assert results[0].id == first_response.data['data']['id']
+        assert results[0].id == retry_response.data['data']['id']
+        assert results[1].id == retake_response.data['data']['id']
+        assert results[0].result_for_response.count() == 1
+        assert results[1].result_for_response.count() == 1
+        assert results[0].tenscore != results[1].tenscore
+
+    def test_retake_rejected_until_current_assessment_is_complete(
+        self,
+        api_client,
+        user,
+    ):
+        first_question = SelfAssessmentQuestions.objects.create(
+            question_text='First',
+            is_for_adults=True,
+            is_active=True,
+        )
+        SelfAssessmentQuestions.objects.create(
+            question_text='Second',
+            is_for_adults=True,
+            is_active=True,
+        )
+        api_client.force_authenticate(user=user)
+        url = '/api/assessment/v1/self-assessment/save-response'
+        partial_answers = [{
+            'question': first_question.id,
+            'response': '2',
+        }]
+
+        first_response = api_client.post(
+            url,
+            {'assesment': partial_answers},
+            format='json',
+        )
+        retake_response = api_client.post(
+            url,
+            {'assesment': partial_answers, 'retake': True},
+            format='json',
+        )
+
+        assert first_response.status_code == status.HTTP_201_CREATED
+        assert retake_response.status_code == status.HTTP_400_BAD_REQUEST
+        assert SelfAssessmentResult.objects.filter(user=user).count() == 1
+
     def test_fetch_result(self, api_client, user):
         api_client.force_authenticate(user=user)
         SelfAssessmentResult.objects.create(user=user, result="High Risk", tenscore=8.5)
@@ -86,6 +184,83 @@ class TestAssessmentViews:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] is True
         assert response.data['data']['result'] == "High Risk"
+
+    def test_combined_results_include_only_authenticated_user_assessment_ai(
+        self,
+        api_client,
+        user,
+        child_user,
+    ):
+        api_client.force_authenticate(user=user)
+        first_result = SelfAssessmentResult.objects.create(
+            user=user,
+            result='Moderate difficulty',
+            raw_total=50,
+            tenscore=6,
+        )
+        second_result = SelfAssessmentResult.objects.create(
+            user=user,
+            result='Mild difficulty',
+            raw_total=65,
+            tenscore=8,
+        )
+        SelfAssessmentResult.objects.create(
+            user=child_user,
+            result='Other user',
+            tenscore=10,
+        )
+        FaceAttentionSession.objects.create(
+            user=user,
+            session_id='assessment-one',
+            is_assessment=True,
+            concentration_score=4,
+            average_concentration_score=4,
+        )
+        latest_ai = FaceAttentionSession.objects.create(
+            user=user,
+            session_id='assessment-two',
+            is_assessment=True,
+            concentration_score=8,
+            average_concentration_score=8,
+        )
+        FaceAttentionSession.objects.create(
+            user=user,
+            session_id='management-session',
+            is_assessment=False,
+            concentration_score=1,
+            average_concentration_score=1,
+        )
+        FaceAttentionSession.objects.create(
+            user=child_user,
+            session_id='other-user-assessment',
+            is_assessment=True,
+            concentration_score=1,
+            average_concentration_score=1,
+        )
+
+        response = api_client.get(self.COMBINED_RESULTS_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['count'] == 2
+        assert response.data['data']['self_assessment_count'] == 2
+        assert response.data['data']['self_assessment_question_count'] == 0
+        assert response.data['data']['ai_assessment_count'] == 2
+        assert [
+            row['id'] for row in response.data['data']['results']
+        ] == [second_result.id, first_result.id]
+        assert response.data['data']['ai_assessment']['total_sessions'] == 2
+        assert (
+            response.data['data']['ai_assessment']['average_attention_score']
+            == 75.0
+        )
+        assert (
+            response.data['data']['ai_assessment']['latest']['id']
+            == latest_ai.id
+        )
+        assert (
+            response.data['data']['ai_assessment']['latest']['is_assessment']
+            is True
+        )
 
     def test_score_list_requires_authentication(self, api_client):
         response = api_client.get(self.SCORE_URL)

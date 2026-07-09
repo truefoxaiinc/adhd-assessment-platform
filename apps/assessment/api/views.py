@@ -11,7 +11,7 @@ import  os,sys
 import logging
 
 logger = logging.getLogger(__name__)
-from django.db.models import Count, Q
+from django.db.models import Avg, Count, Q
 from drf_yasg import openapi
 from rest_framework.pagination import PageNumberPagination
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
@@ -33,6 +33,7 @@ from apps.assessment.cache import (
     get_questions_cache_key,
     get_result_cache_key,
     get_score_list_cache_key,
+    get_combined_result_cache_key,
 )
 
 
@@ -389,6 +390,109 @@ class AssessmentScoreListApiView(generics.GenericAPIView):
                     'next': self.paginator.get_next_link(),
                     'previous': self.paginator.get_previous_link(),
                     'results': data,
+                },
+            }
+            cache_set(cache_key, response_data)
+            return Response(response_data, status=status.HTTP_200_OK)
+        except APIException:
+            raise
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+
+class CombinedAssessmentResultListApiView(generics.GenericAPIView):
+    serializer_class = SelfAssessmentResultSchema
+    permission_classes = (IsAuthenticated,)
+    pagination_class = AssessmentScorePagination
+
+    @swagger_auto_schema(
+        tags=["Self Assessment"],
+        operation_id='authenticated-user-combined-assessment-results',
+        operation_description=(
+            "List the authenticated user's questionnaire attempts together with "
+            "a user-level summary of AI sessions where is_assessment is true."
+        ),
+        manual_parameters=[
+            openapi.Parameter('page', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+            openapi.Parameter('limit', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+        ],
+    )
+    def get(self, request):
+        try:
+            user_instance = get_token_user_or_none(request)
+            cache_key = get_combined_result_cache_key(user_instance.id, request)
+            cached_data = cache_get(cache_key)
+            if cached_data is not None:
+                return Response(cached_data, status=status.HTTP_200_OK)
+
+            questionnaire_results = (
+                SelfAssessmentResult.objects
+                .filter(user_id=user_instance.id)
+                .select_related('user')
+                .only(
+                    'id',
+                    'user_id',
+                    'user__username',
+                    'result',
+                    'raw_total',
+                    'tenscore',
+                    'read_focus_total',
+                    'visual_tracking_total',
+                    'audio_listening_total',
+                    'program_duration',
+                )
+                .order_by('-id')
+            )
+            page = self.paginate_queryset(questionnaire_results)
+            questionnaire_data = self.serializer_class(
+                page,
+                many=True,
+                context={'request': request},
+            ).data
+
+            ai_queryset = FaceAttentionSession.objects.filter(
+                user_id=user_instance.id,
+                is_assessment=True,
+            )
+            ai_summary = ai_queryset.aggregate(
+                total_sessions=Count('id'),
+                average_raw_score=Avg('average_concentration_score'),
+            )
+            average_raw_score = float(
+                ai_summary.pop('average_raw_score') or 0.0
+            )
+            ai_summary['average_attention_score'] = round(
+                max(0.0, min(average_raw_score, 8.0)) / 8.0 * 100,
+                2,
+            )
+            latest_ai_session = ai_queryset.order_by('-created_at', '-id').first()
+            ai_summary['latest'] = (
+                FaceAttentionSessionSchema(
+                    latest_ai_session,
+                    context={'request': request},
+                ).data
+                if latest_ai_session
+                else None
+            )
+            active_question_count = SelfAssessmentQuestions.objects.filter(
+                is_for_adults=bool(user_instance.adult),
+                is_active=True,
+            ).count()
+            self_assessment_count = self.paginator.page.paginator.count
+
+            response_data = {
+                'status_code': status.HTTP_200_OK,
+                'status': True,
+                'message': _success,
+                'data': {
+                    'count': self_assessment_count,
+                    'self_assessment_count': self_assessment_count,
+                    'self_assessment_question_count': active_question_count,
+                    'ai_assessment_count': ai_summary['total_sessions'],
+                    'next': self.paginator.get_next_link(),
+                    'previous': self.paginator.get_previous_link(),
+                    'results': questionnaire_data,
+                    'ai_assessment': ai_summary,
                 },
             }
             cache_set(cache_key, response_data)
