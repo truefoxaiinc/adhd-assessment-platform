@@ -48,6 +48,19 @@ def get_result_cache_key(user_id):
     return f'assessment:result:user:{user_id}:v{version}:latest'
 
 
+def get_score_list_cache_key(user_id, request):
+    version_key = RESULT_CACHE_VERSION_KEY_TEMPLATE.format(user_id=user_id)
+    version = cache_get(version_key, 1)
+    normalized_params = {
+        key: request.query_params.getlist(key)
+        for key in sorted(request.query_params.keys())
+    }
+    params_hash = hashlib.md5(
+        json.dumps(normalized_params, sort_keys=True).encode()
+    ).hexdigest()
+    return f'assessment:scores:user:{user_id}:v{version}:{params_hash}'
+
+
 def get_progress_cache_key(user_id, is_for_adults):
     questions_version = cache_get(QUESTIONS_CACHE_VERSION_KEY, 1)
     result_version_key = RESULT_CACHE_VERSION_KEY_TEMPLATE.format(user_id=user_id)

@@ -1,4 +1,7 @@
 import pytest
+from django.core.cache import cache
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework import status
 from rest_framework.test import APIClient
 from apps.users.models import Users
@@ -36,11 +39,13 @@ def questions():
 
 @pytest.mark.django_db
 class TestAssessmentViews:
+    SCORE_URL = '/api/assessment/v1/self-assessment/scores'
+
     def test_get_questions_adult(self, api_client, user, questions):
         api_client.force_authenticate(user=user)
         url = '/api/assessment/v1/self-assessment/get-questions'
         response = api_client.get(url)
-        assert response.status_code == status.HTTP_201_CREATED  # It returns 201 as per code
+        assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] is True
         assert len(response.data['data']['questions']) == 1
         assert response.data['data']['questions'][0]['question_text'] == "Adult Question 1"
@@ -49,7 +54,7 @@ class TestAssessmentViews:
         api_client.force_authenticate(user=child_user)
         url = '/api/assessment/v1/self-assessment/get-questions'
         response = api_client.get(url)
-        assert response.status_code == status.HTTP_201_CREATED
+        assert response.status_code == status.HTTP_200_OK
         assert len(response.data['data']['questions']) == 1
         assert response.data['data']['questions'][0]['question_text'] == "Child Question 1"
 
@@ -80,3 +85,93 @@ class TestAssessmentViews:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] is True
         assert response.data['data']['result'] == "High Risk"
+
+    def test_score_list_requires_authentication(self, api_client):
+        response = api_client.get(self.SCORE_URL)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_score_list_is_user_scoped_and_paginated(self, api_client, user, child_user):
+        api_client.force_authenticate(user=user)
+        for index in range(3):
+            SelfAssessmentResult.objects.create(
+                user=user,
+                result=f'Risk {index}',
+                tenscore=index + 1,
+            )
+        SelfAssessmentResult.objects.create(
+            user=child_user,
+            result='Other user result',
+            tenscore=10,
+        )
+
+        response = api_client.get(self.SCORE_URL, {'limit': 2})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['count'] == 3
+        assert len(response.data['data']['results']) == 2
+        assert all(
+            row['user'] == user.username
+            for row in response.data['data']['results']
+        )
+
+    def test_score_list_search_filter_and_sort(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        SelfAssessmentResult.objects.create(
+            user=user,
+            result='Low Risk',
+            tenscore=2,
+        )
+        SelfAssessmentResult.objects.create(
+            user=user,
+            result='High Risk',
+            tenscore=8,
+        )
+        SelfAssessmentResult.objects.create(
+            user=user,
+            result='High Risk',
+            tenscore=6,
+        )
+
+        response = api_client.get(
+            self.SCORE_URL,
+            {
+                'search': 'high',
+                'result': 'High Risk',
+                'min_score': 5,
+                'max_score': 8,
+                'sort': 'score',
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert [
+            row['tenscore'] for row in response.data['data']['results']
+        ] == [6.0, 8.0]
+
+    def test_score_list_rejects_invalid_filters(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        score_response = api_client.get(self.SCORE_URL, {'min_score': 'bad'})
+        sort_response = api_client.get(self.SCORE_URL, {'sort': 'username'})
+
+        assert score_response.status_code == status.HTTP_400_BAD_REQUEST
+        assert sort_response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_score_list_cache_avoids_repeat_database_queries(self, api_client, user):
+        cache.clear()
+        api_client.force_authenticate(user=user)
+        SelfAssessmentResult.objects.create(
+            user=user,
+            result='High Risk',
+            tenscore=8,
+        )
+
+        with CaptureQueriesContext(connection) as first_queries:
+            first_response = api_client.get(self.SCORE_URL)
+        with CaptureQueriesContext(connection) as cached_queries:
+            cached_response = api_client.get(self.SCORE_URL)
+
+        assert first_response.status_code == status.HTTP_200_OK
+        assert cached_response.data == first_response.data
+        assert len(first_queries) <= 2
+        assert len(cached_queries) == 0

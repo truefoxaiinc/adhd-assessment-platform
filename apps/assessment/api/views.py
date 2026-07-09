@@ -5,12 +5,15 @@ from helpers.response import ResponseInfo
 from helpers.exceptions.exceptions import safe_exception_response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from helpers.custom_messages import _success
 import  os,sys
 import logging
 
 logger = logging.getLogger(__name__)
+from django.db.models import Q
+from drf_yasg import openapi
+from rest_framework.pagination import PageNumberPagination
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
 from apps.assessment.selectors import get_active_questions_for_user_type
 from helpers.custom_messages import _success,_record_not_found
@@ -21,7 +24,20 @@ from apps.assessment.schemas import (
 from .serializers import (
     SelfAssessmentResponseSerializer
 )
-from apps.assessment.cache import cache_get, cache_set, get_progress_cache_key, get_questions_cache_key, get_result_cache_key
+from apps.assessment.cache import (
+    cache_get,
+    cache_set,
+    get_progress_cache_key,
+    get_questions_cache_key,
+    get_result_cache_key,
+    get_score_list_cache_key,
+)
+
+
+class AssessmentScorePagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'limit'
+    max_page_size = 100
 
 
 class GetSelfAssessmentQuestionsListApiView(generics.GenericAPIView):
@@ -155,6 +171,156 @@ class ResultFetchApiView(generics.GenericAPIView):
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
         
+
+
+class AssessmentScoreListApiView(generics.GenericAPIView):
+    serializer_class = SelfAssessmentResultSchema
+    permission_classes = (IsAuthenticated,)
+    pagination_class = AssessmentScorePagination
+
+    SORT_FIELDS = {
+        'id': 'id',
+        'score': 'tenscore',
+        'tenscore': 'tenscore',
+        'raw_total': 'raw_total',
+        'program_duration': 'program_duration',
+    }
+
+    def get_queryset(self):
+        queryset = (
+            SelfAssessmentResult.objects
+            .filter(user_id=self.request.user.id)
+            .select_related('user')
+            .only(
+                'id',
+                'user_id',
+                'user__username',
+                'result',
+                'raw_total',
+                'tenscore',
+                'read_focus_total',
+                'visual_tracking_total',
+                'audio_listening_total',
+                'program_duration',
+            )
+        )
+
+        search = self.request.query_params.get('search', '').strip()
+        result_filter = self.request.query_params.get('result', '').strip()
+        min_score = self.request.query_params.get('min_score')
+        max_score = self.request.query_params.get('max_score')
+
+        if search:
+            search_query = Q(result__icontains=search)
+            try:
+                numeric_search = float(search)
+            except (TypeError, ValueError):
+                pass
+            else:
+                search_query |= Q(tenscore=numeric_search)
+            queryset = queryset.filter(search_query)
+
+        if result_filter:
+            queryset = queryset.filter(result__iexact=result_filter)
+
+        try:
+            parsed_min_score = None
+            parsed_max_score = None
+            if min_score not in (None, ''):
+                parsed_min_score = float(min_score)
+                queryset = queryset.filter(tenscore__gte=parsed_min_score)
+            if max_score not in (None, ''):
+                parsed_max_score = float(max_score)
+                queryset = queryset.filter(tenscore__lte=parsed_max_score)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                {'score': 'min_score and max_score must be valid numbers.'}
+            ) from exc
+        if (
+            parsed_min_score is not None
+            and parsed_max_score is not None
+            and parsed_min_score > parsed_max_score
+        ):
+            raise ValidationError({
+                'score': 'min_score cannot be greater than max_score.'
+            })
+
+        requested_sort = (
+            self.request.query_params.get('sort')
+            or self.request.query_params.get('ordering')
+            or '-id'
+        )
+        descending = requested_sort.startswith('-')
+        sort_name = requested_sort.lstrip('-')
+        sort_field = self.SORT_FIELDS.get(sort_name)
+        if sort_field is None:
+            raise ValidationError({
+                'sort': (
+                    'Invalid sort field. Use id, score, tenscore, raw_total, '
+                    'or program_duration.'
+                )
+            })
+
+        ordering = f'-{sort_field}' if descending else sort_field
+        if sort_field == 'id':
+            return queryset.order_by(ordering)
+        return queryset.order_by(ordering, '-id')
+
+    @swagger_auto_schema(
+        tags=["Self Assessment"],
+        operation_id='authenticated-user-score-list',
+        operation_description=(
+            "List the authenticated user's assessment scores with pagination, "
+            "search, filters, sorting, and cache-backed responses."
+        ),
+        manual_parameters=[
+            openapi.Parameter('page', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+            openapi.Parameter('limit', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+            openapi.Parameter('search', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+            openapi.Parameter('result', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+            openapi.Parameter('min_score', openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
+            openapi.Parameter('max_score', openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
+            openapi.Parameter(
+                'sort',
+                openapi.IN_QUERY,
+                description=(
+                    'id, score, tenscore, raw_total, or program_duration; '
+                    'prefix with - for descending.'
+                ),
+                type=openapi.TYPE_STRING,
+            ),
+        ],
+    )
+    def get(self, request):
+        try:
+            cache_key = get_score_list_cache_key(request.user.id, request)
+            cached_data = cache_get(cache_key)
+            if cached_data is not None:
+                return Response(cached_data, status=status.HTTP_200_OK)
+
+            page = self.paginate_queryset(self.get_queryset())
+            data = self.serializer_class(
+                page,
+                many=True,
+                context={'request': request},
+            ).data
+            response_data = {
+                'status_code': status.HTTP_200_OK,
+                'status': True,
+                'message': _success,
+                'data': {
+                    'count': self.paginator.page.paginator.count,
+                    'next': self.paginator.get_next_link(),
+                    'previous': self.paginator.get_previous_link(),
+                    'results': data,
+                },
+            }
+            cache_set(cache_key, response_data)
+            return Response(response_data, status=status.HTTP_200_OK)
+        except APIException:
+            raise
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
 
 
 class SelfAssessmentProgressApiView(generics.GenericAPIView):

@@ -9,6 +9,7 @@ urlpatterns = [
             path('get-questions', views.GetSelfAssessmentQuestionsListApiView.as_view()),
             path('save-response', views.SelfAssessmentResponseApiView.as_view()),
             path('fetch-result', views.ResultFetchApiView.as_view()),
+            path('scores', views.AssessmentScoreListApiView.as_view()),
             path('progress', views.SelfAssessmentProgressApiView.as_view()),
 
         ])),
