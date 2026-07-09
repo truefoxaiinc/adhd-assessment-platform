@@ -16,8 +16,10 @@ from apps.assessment.selectors import get_active_questions_for_user_type
 from helpers.custom_messages import _success,_record_not_found
 from apps.assessment.services.scoring_service import ScoringService
 from apps.assessment.schemas import (
-    SelfAssessmentQuestionsListSchema,SelfAssessmentResultSchema
+    AIAssessmentScoreSchema, SelfAssessmentQuestionsListSchema,
+    SelfAssessmentResultSchema,
 )
+from apps.progresstracker.models import FaceAttentionSession
 from .serializers import (
     SelfAssessmentResponseSerializer
 )
@@ -193,6 +195,58 @@ class ResultHistoryApiView(generics.GenericAPIView):
                 "results": data,
             }
             return Response(response_format, status=status.HTTP_200_OK)
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+
+class AIAssessmentScoreHistoryApiView(generics.GenericAPIView):
+    serializer_class = AIAssessmentScoreSchema
+    permission_classes = (IsAuthenticated,)
+    filter_backends = []
+
+    @swagger_auto_schema(
+        tags=["AI Assessment"],
+        operation_id='AI Assessment Score History',
+        operation_description=(
+            "List the authenticated user's AI attention scores. Filter with "
+            "is_assessment=true for assessments or is_assessment=false for "
+            "regular management sessions."
+        ),
+    )
+    def get(self, request):
+        try:
+            is_assessment = request.query_params.get('is_assessment')
+            queryset = FaceAttentionSession.objects.filter(
+                user=request.user
+            ).order_by('-created_at', '-id')
+
+            if is_assessment not in (None, ''):
+                normalized_value = str(is_assessment).strip().lower()
+                if normalized_value not in ('true', 'false'):
+                    raise ValidationError({
+                        'is_assessment': 'Use true or false.'
+                    })
+                queryset = queryset.filter(
+                    is_assessment=normalized_value == 'true'
+                )
+
+            data = self.serializer_class(queryset, many=True).data
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_200_OK
+            response_format["message"] = _success
+            response_format["status"] = True
+            response_format["data"] = {
+                "count": len(data),
+                "results": data,
+            }
+            return Response(response_format, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+            response_format["status"] = False
+            response_format["message"] = "Validation Error"
+            response_format["errors"] = e.detail
+            return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
         

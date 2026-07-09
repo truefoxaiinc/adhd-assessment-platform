@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from apps.assessment.models import SelfAssessmentQuestions,SelfAssessmentResult
+from apps.progresstracker.models import FaceAttentionSession
 
 
 class SelfAssessmentQuestionsListSchema(serializers.ModelSerializer):
@@ -42,3 +43,27 @@ class SelfAssessmentResultSchema(serializers.ModelSerializer):
             except KeyError:
                 pass
         return datas
+
+
+class AIAssessmentScoreSchema(serializers.ModelSerializer):
+    score = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FaceAttentionSession
+        fields = [
+            'id',
+            'session_id',
+            'is_assessment',
+            'score',
+            'concentration_score',
+            'average_concentration_score',
+            'attention_engagement_rate',
+            'average_confidence',
+            'total_processed_frames',
+            'session_duration_seconds',
+            'created_at',
+        ]
+
+    def get_score(self, instance):
+        concentration = instance.average_concentration_score
+        return round((concentration / 8.0) * 100, 2)

@@ -3,6 +3,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from apps.users.models import Users
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse
+from apps.progresstracker.models import FaceAttentionSession
 
 @pytest.fixture
 def api_client():
@@ -36,6 +37,8 @@ def questions():
 
 @pytest.mark.django_db
 class TestAssessmentViews:
+    AI_SCORE_URL = '/api/assessment/v1/ai-assessment/score-history'
+
     def test_get_questions_adult(self, api_client, user, questions):
         api_client.force_authenticate(user=user)
         url = '/api/assessment/v1/self-assessment/get-questions'
@@ -80,3 +83,73 @@ class TestAssessmentViews:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] is True
         assert response.data['data']['result'] == "High Risk"
+
+    def test_ai_score_history_filters_assessment_sessions(self, api_client, user):
+        other_user = Users.objects.create_user(
+            username='other_ai_user',
+            email='other_ai_user@test.com',
+            password='Password123!',
+        )
+        FaceAttentionSession.objects.create(
+            user=user,
+            session_id='assessment-session',
+            is_assessment=True,
+            concentration_score=6,
+            average_concentration_score=6,
+        )
+        FaceAttentionSession.objects.create(
+            user=user,
+            session_id='management-session',
+            is_assessment=False,
+            concentration_score=4,
+            average_concentration_score=4,
+        )
+        FaceAttentionSession.objects.create(
+            user=other_user,
+            session_id='other-session',
+            is_assessment=True,
+            concentration_score=8,
+            average_concentration_score=8,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(
+            self.AI_SCORE_URL,
+            {'is_assessment': 'true'},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['count'] == 1
+        assert response.data['data']['results'][0]['session_id'] == 'assessment-session'
+        assert response.data['data']['results'][0]['is_assessment'] is True
+        assert response.data['data']['results'][0]['score'] == 75.0
+
+    def test_ai_score_history_filters_management_sessions(self, api_client, user):
+        FaceAttentionSession.objects.create(
+            user=user,
+            session_id='management-session',
+            is_assessment=False,
+            concentration_score=4,
+            average_concentration_score=4,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(
+            self.AI_SCORE_URL,
+            {'is_assessment': 'false'},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['count'] == 1
+        assert response.data['data']['results'][0]['is_assessment'] is False
+
+    def test_ai_score_history_rejects_invalid_filter(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(
+            self.AI_SCORE_URL,
+            {'is_assessment': 'yes'},
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['errors']['is_assessment'] == 'Use true or false.'

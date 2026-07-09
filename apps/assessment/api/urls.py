@@ -13,6 +13,10 @@ urlpatterns = [
             path('progress', views.SelfAssessmentProgressApiView.as_view()),
 
         ])),
+        path(
+            'ai-assessment/score-history',
+            views.AIAssessmentScoreHistoryApiView.as_view(),
+        ),
 
     ]))
 ]

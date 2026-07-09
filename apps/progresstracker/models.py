@@ -6,6 +6,7 @@ from apps.users.models import Users
 class FaceAttentionSession(models.Model):
     user                  = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='attention_sessions')
     session_id            = models.CharField(max_length=100)
+    is_assessment         = models.BooleanField(default=False)
     concentration_score   = models.FloatField()
     gaze_ratio_avg        = models.FloatField(default=1.0)
     inattention_duration  = models.FloatField(default=0.0)
@@ -35,6 +36,22 @@ class FaceAttentionSession(models.Model):
     gaze_warning_count = models.IntegerField(default=0)
     session_duration_seconds = models.FloatField(default=0.0)
     created_at            = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=['user', '-created_at'],
+                name='face_session_user_created_idx',
+            ),
+            models.Index(
+                fields=['user', '-average_concentration_score'],
+                name='face_session_user_score_idx',
+            ),
+            models.Index(
+                fields=['user', 'is_assessment', '-created_at'],
+                name='face_user_assessment_idx',
+            ),
+        ]
 
 class UserAssessmentDetails(models.Model):
     user              = models.ForeignKey(Users, on_delete=models.CASCADE)
