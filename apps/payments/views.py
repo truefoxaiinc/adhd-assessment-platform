@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
@@ -32,6 +33,7 @@ def payment_success_page(request):
             'is_success': True,
             'title': 'Payment successful',
             'message': 'Your payment was completed. You can now return to the ADHD Minder app.',
+            'app_return_url': settings.PAYMENT_APP_SUCCESS_URL,
         },
     )
 
@@ -44,6 +46,7 @@ def payment_cancel_page(request):
             'is_success': False,
             'title': 'Payment cancelled',
             'message': 'No payment was completed. You can return to the ADHD Minder app and try again.',
+            'app_return_url': settings.PAYMENT_APP_CANCEL_URL,
         },
     )
 

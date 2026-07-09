@@ -491,6 +491,8 @@ STRIPE_MONTHLY_PRICE_ID = config('STRIPE_MONTHLY_PRICE_ID', default='')
 STRIPE_SUCCESS_URL = config('STRIPE_SUCCESS_URL', default='')
 STRIPE_CANCEL_URL = config('STRIPE_CANCEL_URL', default='')
 STRIPE_BILLING_PORTAL_RETURN_URL = config('STRIPE_BILLING_PORTAL_RETURN_URL', default='')
+PAYMENT_APP_SUCCESS_URL = config('PAYMENT_APP_SUCCESS_URL', default='attentionminder://payments/success')
+PAYMENT_APP_CANCEL_URL = config('PAYMENT_APP_CANCEL_URL', default='attentionminder://payments/cancel')
 STRIPE_ALLOWED_REDIRECT_HOSTS = [
     host.strip()
     for host in config('STRIPE_ALLOWED_REDIRECT_HOSTS', default='').split(',')

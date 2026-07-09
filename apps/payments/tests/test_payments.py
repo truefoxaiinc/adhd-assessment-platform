@@ -67,8 +67,10 @@ def test_payment_result_pages_are_public(client):
 
     assert success_response.status_code == 200
     assert b'Payment successful' in success_response.content
+    assert b'attentionminder://payments/success' in success_response.content
     assert cancel_response.status_code == 200
     assert b'Payment cancelled' in cancel_response.content
+    assert b'attentionminder://payments/cancel' in cancel_response.content
 
 
 @pytest.mark.django_db
