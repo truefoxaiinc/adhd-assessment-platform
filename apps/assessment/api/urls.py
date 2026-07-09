@@ -9,19 +9,9 @@ urlpatterns = [
             path('get-questions', views.GetSelfAssessmentQuestionsListApiView.as_view()),
             path('save-response', views.SelfAssessmentResponseApiView.as_view()),
             path('fetch-result', views.ResultFetchApiView.as_view()),
-            path(
-                'results',
-                views.CombinedAssessmentResultListApiView.as_view(),
-                name='combined-result-list',
-            ),
             path('progress', views.SelfAssessmentProgressApiView.as_view()),
 
         ])),
-        path(
-            'ai-attention/scores',
-            views.AssessmentScoreListApiView.as_view(),
-            name='ai-attention-score-list',
-        ),
 
     ]))
 ]
