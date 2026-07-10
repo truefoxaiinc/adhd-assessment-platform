@@ -384,20 +384,35 @@ Face/attention detection runs entirely in the frontend. After a video or assessm
 POST /api/assessment/v1/ai-assessment/save-score
 ```
 
+All listed fields are required. Send `0` for numeric telemetry values that do not apply.
+
 Example payload:
 
 ```json
 {
   "session_id": "frontend-session",
+  "file_id": 12,
   "is_assessment": true,
   "final_score": 80,
   "attention_engagement_rate": 90,
   "average_confidence": 0.85,
   "total_processed_frames": 120,
+  "sampled_frames": 120,
   "session_duration_seconds": 300,
-  "face_detected": true,
-  "video_attentive": true,
-  "head_pose_ok": true
+  "inattention_duration": 20,
+  "gaze_ratio_avg": 0,
+  "drowsy_state": 0,
+  "brightness_score": 0,
+  "pitch": 0,
+  "yaw": 0,
+  "roll": 0,
+  "blink_ratio": 0,
+  "yawn_distance": 0,
+  "bad_frame_count": 0,
+  "blurry_frame_count": 0,
+  "low_light_frame_count": 0,
+  "eyes_closed_count": 0,
+  "gaze_warning_count": 0
 }
 ```
 

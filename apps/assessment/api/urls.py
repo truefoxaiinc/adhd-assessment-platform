@@ -17,6 +17,10 @@ urlpatterns = [
             'ai-assessment/score-history',
             views.AIAssessmentScoreHistoryApiView.as_view(),
         ),
+        path(
+            'ai-assessment/save-score',
+            views.FrontendAttentionScoreSaveApiView.as_view(),
+        ),
 
     ]))
 ]

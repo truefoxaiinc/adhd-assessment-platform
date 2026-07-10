@@ -1,23 +1,18 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from apps.filehandler.models import AdhdContent
 from apps.users.models import Users
 
 
 class FaceAttentionSession(models.Model):
     user                  = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='attention_sessions')
+    file                  = models.ForeignKey(AdhdContent, on_delete=models.SET_NULL, related_name='attention_sessions', blank=True, null=True)
     session_id            = models.CharField(max_length=100)
     is_assessment         = models.BooleanField(default=False)
     concentration_score   = models.FloatField()
-    gaze_ratio_avg        = models.FloatField(default=1.0)
+    gaze_ratio_avg        = models.FloatField(default=0.0)
     inattention_duration  = models.FloatField(default=0.0)
-    drowsy_state          = models.FloatField(default=0.2)
-    face_detected         = models.BooleanField(default=False)
-    video_attentive       = models.BooleanField(default=False)
-    eyes_closed           = models.BooleanField(default=False)
-    yawning               = models.BooleanField(default=False)
-    gaze_state            = models.CharField(max_length=20, blank=True, null=True)
-    head_pose_ok          = models.BooleanField(default=False)
-    low_light             = models.BooleanField(default=False)
+    drowsy_state          = models.FloatField(default=0.0)
     brightness_score      = models.FloatField(default=0.0)
     pitch                 = models.FloatField(default=0.0)
     yaw                   = models.FloatField(default=0.0)

@@ -21,6 +21,7 @@ from apps.assessment.schemas import (
 )
 from apps.progresstracker.models import FaceAttentionSession
 from .serializers import (
+    FrontendAttentionScoreSerializer,
     SelfAssessmentResponseSerializer
 )
 from apps.assessment.cache import cache_get, cache_set, get_progress_cache_key, get_questions_cache_key, get_result_cache_key
@@ -248,6 +249,46 @@ class AIAssessmentScoreHistoryApiView(generics.GenericAPIView):
             response_format["message"] = "Validation Error"
             response_format["errors"] = e.detail
             return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+
+class FrontendAttentionScoreSaveApiView(generics.GenericAPIView):
+    serializer_class = FrontendAttentionScoreSerializer
+    permission_classes = (IsAuthenticated,)
+
+    @swagger_auto_schema(
+        tags=["AI Assessment"],
+        operation_id='Save Frontend Attention Score',
+        operation_description=(
+            "Save final attention/detection metrics calculated on the frontend "
+            "after video completion. Backend only stores the submitted result."
+        ),
+        request_body=FrontendAttentionScoreSerializer,
+    )
+    def post(self, request):
+        try:
+            serializer = self.serializer_class(
+                data=request.data,
+                context={'request': request},
+            )
+            if not serializer.is_valid():
+                response_format = ResponseInfo().response
+                response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+                response_format["status"] = False
+                response_format["message"] = "Validation Error"
+                response_format["errors"] = serializer.errors
+                return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
+
+            instance = serializer.save()
+            data = AIAssessmentScoreSchema(instance).data
+
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_201_CREATED
+            response_format["message"] = _success
+            response_format["status"] = True
+            response_format["data"] = data
+            return Response(response_format, status=status.HTTP_201_CREATED)
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
         

@@ -47,12 +47,14 @@ class SelfAssessmentResultSchema(serializers.ModelSerializer):
 
 class AIAssessmentScoreSchema(serializers.ModelSerializer):
     score = serializers.SerializerMethodField()
+    file_id = serializers.IntegerField(allow_null=True)
 
     class Meta:
         model = FaceAttentionSession
         fields = [
             'id',
             'session_id',
+            'file_id',
             'is_assessment',
             'score',
             'concentration_score',

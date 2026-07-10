@@ -45,6 +45,7 @@ class FaceAttentionSessionAdmin(ModelAdmin):
     list_display = (
         'id',
         'user',
+        'file',
         'session_id',
         'concentration_score',
         'focus_status',
@@ -53,8 +54,8 @@ class FaceAttentionSessionAdmin(ModelAdmin):
         'drowsy_state',
         'created_at',
     )
-    list_filter = ('user', 'created_at')
-    search_fields = ('user__email', 'user__username', 'session_id')
+    list_filter = ('user', 'file', 'created_at')
+    search_fields = ('user__email', 'user__username', 'session_id', 'file__title')
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
     list_per_page = 25
