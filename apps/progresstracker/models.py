@@ -2,12 +2,17 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from apps.filehandler.models import AdhdContent
 from apps.users.models import Users
+import uuid
+
+
+def generate_attention_session_id():
+    return uuid.uuid4().hex[:12]
 
 
 class FaceAttentionSession(models.Model):
     user                  = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='attention_sessions')
     file                  = models.ForeignKey(AdhdContent, on_delete=models.SET_NULL, related_name='attention_sessions', blank=True, null=True)
-    session_id            = models.CharField(max_length=100)
+    session_id            = models.CharField(max_length=100, default=generate_attention_session_id)
     is_assessment         = models.BooleanField(default=False)
     concentration_score   = models.FloatField()
     gaze_ratio_avg        = models.FloatField(default=0.0)

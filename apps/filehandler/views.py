@@ -1,4 +1,8 @@
-from apps.filehandler.serializers import VideoUploadSerializer,AdhdContentSerializer
+from apps.filehandler.serializers import (
+    AdhdContentSerializer,
+    UpdateLearningProgressSerializer,
+    VideoUploadSerializer,
+)
 from apps.progresstracker.services.track_services import ProgressTrackerActions
 from helpers.helper import get_token_user_or_none
 from rest_framework import status
@@ -202,6 +206,7 @@ class FileUploadView(APIView):
 
 class UpdateLearningProgress(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = UpdateLearningProgressSerializer
     
 
     @swagger_auto_schema(tags=["Files"],operation_id='update-learning-progress',operation_description="This API used to update learning progress",
@@ -229,9 +234,27 @@ class UpdateLearningProgress(APIView):
     )
     def post(self, request):
         try:
-            filetype, day_completed, order_number = request.data.get("filetype"), request.data.get("day_completed"), request.data.get("order_number")
             user_instance = get_token_user_or_none(request)
-            ProgressTrackerActions.update_learning_progress(user_instance, filetype, day_completed, order_number)
+            serializer = self.serializer_class(
+                data=request.data,
+                context={"request": request},
+            )
+            if not serializer.is_valid():
+                return Response(
+                    {
+                        "message": "Validation Error",
+                        "status": False,
+                        "errors": serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            ProgressTrackerActions.update_learning_progress(
+                user_instance,
+                serializer.validated_data["filetype"],
+                serializer.validated_data["day_completed"],
+                serializer.validated_data["order_number"],
+            )
 
             return Response(
                 {

@@ -384,7 +384,7 @@ Face/attention detection runs entirely in the frontend. After a video or assessm
 POST /api/assessment/v1/ai-assessment/save-score
 ```
 
-All listed fields are required. Send `0` for numeric telemetry values that do not apply.
+All listed fields except `session_id` are required. If `session_id` is omitted, the backend generates it. Send `0` for numeric telemetry values that do not apply.
 
 Example payload:
 

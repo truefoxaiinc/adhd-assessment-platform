@@ -229,6 +229,24 @@ class TestAssessmentViews:
         user.refresh_from_db()
         assert user.ai_assessment_score == 80
 
+    def test_save_frontend_attention_score_generates_session_id(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        payload = self.full_attention_payload()
+        payload.pop('session_id')
+
+        response = api_client.post(
+            self.AI_SCORE_SAVE_URL,
+            payload,
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['data']['session_id']
+        assert FaceAttentionSession.objects.filter(
+            user=user,
+            session_id=response.data['data']['session_id'],
+        ).exists()
+
     def test_save_frontend_attention_score_requires_score(self, api_client, user):
         api_client.force_authenticate(user=user)
 

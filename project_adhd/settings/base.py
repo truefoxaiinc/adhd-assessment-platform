@@ -24,12 +24,13 @@ from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 
 SENTRY_DSN = config('SENTRY_DSN', default='')
+SENTRY_SEND_DEFAULT_PII = config('SENTRY_SEND_DEFAULT_PII', default=False, cast=bool)
 if SENTRY_DSN:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         integrations=[DjangoIntegration()],
         traces_sample_rate=1.0,
-        send_default_pii=True
+        send_default_pii=SENTRY_SEND_DEFAULT_PII,
     )
 
 
@@ -97,7 +98,7 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-X_FRAME_OPTIONS = 'ALLOWALL'
+X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 SECURE_CONTENT_TYPE_NOSNIFF = True
 CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
@@ -145,7 +146,6 @@ INTERNAL_IPS = [
 
 THIRD_PARTY_APPS = [
     'drf_yasg',
-    'debug_toolbar',
     'django_extensions',
     'rest_framework',
     'rest_framework_simplejwt',
@@ -246,7 +246,6 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'debug_toolbar.middleware.DebugToolbarMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',

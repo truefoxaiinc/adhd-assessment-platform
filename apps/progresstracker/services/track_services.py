@@ -60,13 +60,15 @@ class ProgressTrackerActions:
             else:
                 is_day_completed = False
 
-            tracker_instance = ProgressTracker()
-            tracker_instance.user         = user_instance
-            tracker_instance.day_number   = day_completed
-            tracker_instance.file_type    = filetype
-            tracker_instance.order_number = order_number
-            tracker_instance.is_day_completed = is_day_completed
-            tracker_instance.save()
+            ProgressTracker.objects.update_or_create(
+                user=user_instance,
+                day_number=day_completed,
+                file_type=filetype,
+                order_number=order_number,
+                defaults={
+                    'is_day_completed': is_day_completed,
+                },
+            )
 
             assessment_instance   = UserAssessmentDetails.objects.filter(user=user_instance).first()
             if assessment_instance:
