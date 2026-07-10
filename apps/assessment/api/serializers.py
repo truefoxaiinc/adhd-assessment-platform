@@ -6,6 +6,8 @@ from apps.progresstracker.models import (
     FaceAttentionSession,
     generate_attention_session_id,
 )
+from apps.progresstracker.services.track_services import ProgressTrackerActions
+from django.db import transaction
 from helpers.helper import get_token_user_or_none,get_object_or_none
 from rest_framework.exceptions import ValidationError
 import math
@@ -131,6 +133,21 @@ class FrontendAttentionScoreSerializer(serializers.Serializer):
                 field: 'Unknown field.' for field in sorted(unknown_fields)
             })
 
+        user = self.context['request'].user
+        content = attrs['file']
+        if content.is_management:
+            age_group = user.age_category or 'adult'
+            if content.age_group != age_group:
+                raise ValidationError({
+                    'file_id': "Lesson/file does not belong to this user's age group."
+                })
+
+            unlocked_days = ProgressTrackerActions.get_days_for_the_file(user) or [1]
+            if content.day not in unlocked_days:
+                raise ValidationError({
+                    'file_id': 'Lesson/file is locked for this user.'
+                })
+
         expected_average_score = round((attrs['final_score'] / 100.0) * 8.0, 2)
         attrs['average_concentration_score'] = expected_average_score
         attrs['concentration_score'] = expected_average_score
@@ -154,16 +171,30 @@ class FrontendAttentionScoreSerializer(serializers.Serializer):
         final_score = validated_data.pop('final_score', None)
         session_id = validated_data.get('session_id') or generate_attention_session_id()
         validated_data['session_id'] = session_id
-        instance, _ = FaceAttentionSession.objects.update_or_create(
-            user=user,
-            session_id=session_id,
-            defaults=validated_data,
-        )
 
-        if instance.is_assessment:
-            if final_score is None:
-                final_score = round((instance.average_concentration_score / 8.0) * 100.0, 2)
-            user.ai_assessment_score = final_score
-            user.save(update_fields=['ai_assessment_score'])
+        with transaction.atomic():
+            instance, _ = FaceAttentionSession.objects.update_or_create(
+                user=user,
+                session_id=session_id,
+                defaults=validated_data,
+            )
+
+            if instance.is_assessment:
+                if final_score is None:
+                    final_score = round((instance.average_concentration_score / 8.0) * 100.0, 2)
+                user.ai_assessment_score = final_score
+                user.save(update_fields=['ai_assessment_score'])
+
+            if instance.file and instance.file.is_management:
+                progress_updated = ProgressTrackerActions.update_learning_progress(
+                    user,
+                    instance.file.file_type,
+                    instance.file.day,
+                    instance.file.order_number,
+                )
+                if not progress_updated:
+                    raise ValidationError({
+                        'file_id': 'Unable to update learning progress for this file.'
+                    })
 
         return instance

@@ -4,7 +4,7 @@ from rest_framework.test import APIClient
 from apps.users.models import Users
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse
 from apps.filehandler.models import AdhdContent
-from apps.progresstracker.models import FaceAttentionSession
+from apps.progresstracker.models import FaceAttentionSession, ProgressTracker, UserAssessmentDetails
 
 @pytest.fixture
 def api_client():
@@ -246,6 +246,63 @@ class TestAssessmentViews:
             user=user,
             session_id=response.data['data']['session_id'],
         ).exists()
+
+    def test_save_frontend_attention_score_updates_learning_progress_for_management_file(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        content = AdhdContent.objects.create(
+            title='Management Day 1 Video',
+            file='adhd_content/management-day-1-video.mp4',
+            is_management=True,
+            age_group='adult',
+            day=1,
+            file_type='video',
+            order_number=1,
+        )
+
+        response = api_client.post(
+            self.AI_SCORE_SAVE_URL,
+            self.full_attention_payload(
+                content=content,
+                is_assessment=False,
+            ),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert ProgressTracker.objects.filter(
+            user=user,
+            day_number=1,
+            file_type='video',
+            order_number='1',
+        ).exists()
+
+        assessment_details = UserAssessmentDetails.objects.get(user=user)
+        assert assessment_details.last_completed == 1
+
+    def test_save_frontend_attention_score_rejects_locked_management_file(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        content = AdhdContent.objects.create(
+            title='Management Day 2 Video',
+            file='adhd_content/management-day-2-video.mp4',
+            is_management=True,
+            age_group='adult',
+            day=2,
+            file_type='video',
+            order_number=1,
+        )
+
+        response = api_client.post(
+            self.AI_SCORE_SAVE_URL,
+            self.full_attention_payload(
+                content=content,
+                is_assessment=False,
+            ),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['errors']['file_id'] == 'Lesson/file is locked for this user.'
+        assert not ProgressTracker.objects.filter(user=user, day_number=2).exists()
 
     def test_save_frontend_attention_score_requires_score(self, api_client, user):
         api_client.force_authenticate(user=user)
