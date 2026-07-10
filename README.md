@@ -1,13 +1,13 @@
 # ADHD-Minder Backend API
 
-ADHD-Minder is a Django REST Framework backend for user authentication, self-assessment, scoring, learning progress tracking, file/content delivery, and real-time face attention tracking through WebSockets.
+ADHD-Minder is a Django REST Framework backend for user authentication, self-assessment, scoring, learning progress tracking, file/content delivery, and storing frontend-submitted attention summaries.
 
 The backend supports:
 
 - JWT authentication and password reset flows.
 - Self-assessment questions, responses, scoring, and progress.
 - ADHD content listing and lock/unlock logic based on user progress.
-- Real-time face/concentration validation using Django Channels, OpenCV, and AI utilities.
+- Frontend-submitted attention score and session summary storage.
 - Learning progress updates after video/file completion.
 - Swagger API documentation.
 - Redis-backed Channels and cache support.
@@ -23,7 +23,6 @@ The backend supports:
 - Daphne
 - Redis
 - PostgreSQL or SQLite, depending on settings
-- OpenCV, MediaPipe, dlib related ML dependencies
 - drf-yasg Swagger docs
 - Docker and Docker Compose
 
@@ -37,7 +36,7 @@ ADHD-Minder-backend/
     assessment/        Self-assessment questions, responses, scoring
     filehandler/       ADHD content/file listing and S3 helpers
     progresstracker/   User learning progress and attention sessions
-    websocket/         Face detection WebSocket consumer and middleware
+    websocket/         Channels routing and middleware for future websocket features
     articles/          Article APIs
   helpers/             Shared response, auth, exception helpers
   services/            Business logic services
@@ -97,11 +96,7 @@ The API will be available at:
 http://127.0.0.1:8000/api/docs/
 ```
 
-The WebSocket endpoint will be:
-
-```text
-ws://127.0.0.1:8000/ws/face-detection/?token=ACCESS_TOKEN
-```
+The legacy face-detection WebSocket endpoint is disabled. Frontend clients should perform detection locally and submit final metrics through the REST API.
 
 ## Running Natively
 
@@ -200,13 +195,7 @@ HTTP APIs expect:
 Authorization: Bearer ACCESS_TOKEN
 ```
 
-WebSocket authentication uses the token query parameter:
-
-```text
-ws://host/ws/face-detection/?token=ACCESS_TOKEN
-```
-
-Do not send `user_id` from the client for WebSocket authentication. The backend reads the authenticated user from the token.
+The backend no longer accepts webcam frames over WebSockets. Do not send `user_id` from the client for score or progress updates; the backend reads the authenticated user from the JWT.
 
 ## Main REST API Modules
 
@@ -387,18 +376,29 @@ Example:
 GET /api/filehandler/v1/filehandler/list-files?is_management=true
 ```
 
-### WebSocket
+### Frontend Attention Score
 
-WebSocket route:
+Face/attention detection runs entirely in the frontend. After a video or assessment session completes, submit the final frontend-calculated metrics:
 
 ```text
-/ws/face-detection/
+POST /api/assessment/v1/ai-assessment/save-score
 ```
 
-Full URL:
+Example payload:
 
-```text
-ws://host/ws/face-detection/?token=ACCESS_TOKEN
+```json
+{
+  "session_id": "frontend-session",
+  "is_assessment": true,
+  "final_score": 80,
+  "attention_engagement_rate": 90,
+  "average_confidence": 0.85,
+  "total_processed_frames": 120,
+  "session_duration_seconds": 300,
+  "face_detected": true,
+  "video_attentive": true,
+  "head_pose_ok": true
+}
 ```
 
 ## Assessment Score Calculation
@@ -455,250 +455,7 @@ The result label is saved into `SelfAssessmentResult.result`.
 
 ## WebSocket Face Detection API
 
-The WebSocket API is used for live face/attention tracking during a video or file session.
-It receives camera frames from the client, analyzes concentration, and sends live feedback back to the app.
-When the session ends, it can update the user's learning progress and save attention metrics.
-
-### Connect
-
-Pass the JWT access token as a query parameter:
-
-```text
-ws://localhost:8000/ws/face-detection/?token=ACCESS_TOKEN
-```
-
-Production example:
-
-```text
-ws://13.217.234.177/ws/face-detection/?token=ACCESS_TOKEN
-```
-
-If the token is valid, the first response includes the authenticated `user_id`.
-
-```json
-{
-  "type": "connection_established",
-  "message": "WebSocket ready - Send frame as base64 for full analysis",
-  "session_id": "33a3c4f9",
-  "user_id": 12,
-  "auth_format": "ws://host/ws/face-detection/?token=access_token",
-  "expected_format": {
-    "type": "validate_face",
-    "frame_base64": "base64_encoded_image",
-    "face": {
-      "x": "int",
-      "y": "int",
-      "width": "int",
-      "height": "int"
-    },
-    "frame": {
-      "width": "int",
-      "height": "int"
-    },
-    "is_assessment": false
-  },
-  "endcall_format": {
-    "type": "endcall",
-    "filetype": "video|file",
-    "day_completed": "int",
-    "order_number": "int"
-  }
-}
-```
-
-If the token is missing or invalid, the server rejects the connection and closes the socket with code `4401`.
-
-### Send Face Validation Data
-
-Send camera frames as base64 images.
-The `face` object should contain the face bounding box detected on the client.
-
-```json
-{
-  "type": "validate_face",
-  "frame_base64": "/9j/4AAQSkZJRgABAQAAAQABAAD...",
-  "face": {
-    "x": 120,
-    "y": 80,
-    "width": 180,
-    "height": 180
-  },
-  "frame": {
-    "width": 640,
-    "height": 480
-  },
-  "is_assessment": false
-}
-```
-
-The server validates message and frame size before decoding the image. Oversized frames are rejected and the socket is closed with code `4408`.
-
-### Validation Response
-
-```json
-{
-  "type": "validation_result",
-  "result": {
-    "face_detected": true,
-    "concentration_level": "high",
-    "concentration_score": 7,
-    "message": "Good concentration",
-    "validation_passed": true,
-    "metrics": {
-      "gaze_ratio": 0.95,
-      "drowsy_state": 0.1
-    },
-    "engagement": {
-      "inattention_duration": 0
-    },
-    "feedback": {
-      "show_recommendations": true,
-      "alert_level": "high",
-      "action_required": false,
-      "inattention_duration": 0
-    }
-  },
-  "session_metrics_count": 1,
-  "user_id": 12
-}
-```
-
-### Error Responses
-
-Invalid messages are returned in a safe WebSocket error format:
-
-```json
-{
-  "type": "error",
-  "message": "Invalid frame_base64 data",
-  "timestamp": "2026-06-28T12:00:00.000000"
-}
-```
-
-Common messages:
-
-```text
-Face data is required
-frame_base64 is required for full analysis
-frame_base64 must be a string
-Invalid frame_base64 data
-Frame payload too large
-Message payload too large
-Rate limit exceeded
-```
-
-Close codes:
-
-```text
-4401 = unauthenticated
-4408 = payload too large / policy violation
-4429 = rate limit exceeded
-```
-
-### Stats
-
-Request:
-
-```json
-{
-  "type": "get_stats"
-}
-```
-
-Response includes total collected metrics and bounded stored samples:
-
-```json
-{
-  "type": "detection_stats",
-  "stats": {
-    "session_info": {
-      "session_id": "33a3c4f9",
-      "metrics_collected": 10,
-      "stored_metric_samples": 10,
-      "user_id": 12
-    }
-  },
-  "timestamp": "2026-06-28T12:00:00.000000"
-}
-```
-
-### Ping
-
-```json
-{
-  "type": "ping"
-}
-```
-
-Response:
-
-```json
-{
-  "type": "pong",
-  "timestamp": "2026-06-16T09:16:02.123456"
-}
-```
-
-### End Session And Update Progress
-
-Send this when the user completes a video:
-
-```json
-{
-  "type": "endcall",
-  "filetype": "video",
-  "day_completed": 1,
-  "order_number": 1
-}
-```
-
-For a file completion:
-
-```json
-{
-  "type": "endcall",
-  "filetype": "file",
-  "day_completed": 1,
-  "order_number": 1
-}
-```
-
-Response:
-
-```json
-{
-  "type": "endcall_processed",
-  "session_id": "33a3c4f9",
-  "user_id": 12,
-  "metrics_count": 10,
-  "session_summary": {
-    "total_frames": 10,
-    "stored_metric_samples": 10,
-    "avg_concentration_score": 7.5,
-    "final_attention_score_percent": 93.75,
-    "face_detection_rate": 100.0,
-    "attention_engagement_rate": 90.0
-  },
-  "filetype": "video",
-  "day_completed": 1,
-  "order_number": 1,
-  "progress_updated": true,
-  "message": "Session ended successfully"
-}
-```
-
-After this response, the server closes the socket.
-
-### Client Flow
-
-```text
-1. Connect with token.
-2. Wait for connection_established.
-3. Repeatedly send validate_face with base64 frame data.
-4. Read validation_result responses for live feedback.
-5. Send endcall after the video/file is completed.
-6. Read endcall_processed and let the socket close.
-```
+The legacy `/ws/face-detection/` endpoint has been removed. The backend must not receive webcam frames or run attention detection. Clients should run detection locally and submit only final session metrics through the REST score-save endpoint.
 
 ## Error Response Format
 
@@ -774,15 +531,11 @@ python -m pytest
 
 ## Troubleshooting
 
-### WebSocket closes with code 4401
+### Frontend score save returns unauthorized
 
 Cause: token is missing, expired, invalid, or not accepted by JWT authentication.
 
-Fix:
-
-```text
-ws://host/ws/face-detection/?token=ACCESS_TOKEN
-```
+Fix: send a valid bearer token with the REST request.
 
 ### Redis connection fails
 
@@ -818,7 +571,6 @@ python -m venv venv
 
 - Keep secrets out of Git.
 - Use `.env` for credentials and deployment configuration.
-- Use Daphne for WebSocket support.
-- Use JWT query authentication for WebSocket clients.
+- Use Daphne only if future non-detection WebSocket features are added.
 - Do not trust `user_id` from client payloads for progress or score updates.
 - Password reset requires the one-time `reset_token` returned by OTP verification.
