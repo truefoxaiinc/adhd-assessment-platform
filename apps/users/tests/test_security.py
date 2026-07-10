@@ -6,6 +6,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.users.models import PasswordResetOTP, Users
 from apps.users.services.password_reset_service import PasswordResetService
@@ -239,6 +240,65 @@ class TestRegistrationPrivilegeEscalation:
         assert existing_user.username == 'existing_user'
         assert existing_user.email == 'existing_user@test.com'
         assert Users.objects.filter(email='new_public_user@test.com').exists()
+
+
+@pytest.mark.django_db
+class TestJWTAuthenticationUserState:
+    profile_url = '/api/users/v1/users/get-user-profile'
+
+    def _authenticate_with_jwt(self, api_client, user):
+        access_token = RefreshToken.for_user(user).access_token
+        api_client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token}')
+
+    def test_active_user_can_access_protected_api(self, api_client):
+        user = Users.objects.create_user(
+            username='active_jwt_user',
+            email='active_jwt_user@test.com',
+            password='Password123!',
+            is_verified=True,
+            is_active=True,
+            is_deleted=False,
+        )
+        self._authenticate_with_jwt(api_client, user)
+
+        response = api_client.get(self.profile_url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+
+    def test_inactive_user_token_is_rejected(self, api_client):
+        user = Users.objects.create_user(
+            username='inactive_jwt_user',
+            email='inactive_jwt_user@test.com',
+            password='Password123!',
+            is_verified=True,
+            is_active=False,
+        )
+        self._authenticate_with_jwt(api_client, user)
+
+        response = api_client.get(self.profile_url)
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_soft_deleted_user_token_is_rejected(self, api_client):
+        user = Users.objects.create_user(
+            username='deleted_jwt_user',
+            email='deleted_jwt_user@test.com',
+            password='Password123!',
+            is_verified=True,
+            is_deleted=True,
+        )
+        self._authenticate_with_jwt(api_client, user)
+
+        response = api_client.get(self.profile_url)
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
 
 class TestProductionSecretConfig:
