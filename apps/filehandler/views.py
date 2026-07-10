@@ -10,8 +10,11 @@ from apps.filehandler.services.files_services import FilesActions
 from .models import AdhdContent
 import os,boto3
 import mimetypes
+import logging
 from django.conf import settings
 from drf_yasg import openapi
+
+logger = logging.getLogger(__name__)
 
 class FetchS3Files(APIView):
     permission_classes = [IsAuthenticated]
@@ -110,12 +113,15 @@ class ListAllFiles(APIView):
                 context={"unlocked_days": unlocked_days},
             )
 
+            response_data = {
+                "message": "Success",
+                "status": True,
+                "data": serializer.data
+            }
+            logger.warning("ListAllFiles response: %s", response_data)
+
             return Response(
-                {
-                    "message": "Success",
-                    "status": True,
-                    "data": serializer.data
-                },
+                response_data,
                 status=status.HTTP_200_OK,
             )
 
