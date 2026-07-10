@@ -21,6 +21,14 @@ urlpatterns = [
             'ai-assessment/save-score',
             views.FrontendAttentionScoreSaveApiView.as_view(),
         ),
+        path(
+            'management/dashboard',
+            views.ManagementDashboardApiView.as_view(),
+        ),
+        path(
+            'management/latest-week',
+            views.ManagementLatestWeekApiView.as_view(),
+        ),
 
     ]))
 ]

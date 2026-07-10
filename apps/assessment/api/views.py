@@ -9,6 +9,8 @@ from rest_framework.exceptions import ValidationError
 from helpers.custom_messages import _success
 import  os,sys
 import logging
+from collections import defaultdict
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
@@ -20,6 +22,7 @@ from apps.assessment.schemas import (
     SelfAssessmentResultSchema,
 )
 from apps.progresstracker.models import FaceAttentionSession
+from django.utils import timezone
 from .serializers import (
     FrontendAttentionScoreSerializer,
     SelfAssessmentResponseSerializer
@@ -289,6 +292,287 @@ class FrontendAttentionScoreSaveApiView(generics.GenericAPIView):
             response_format["status"] = True
             response_format["data"] = data
             return Response(response_format, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+
+class ManagementDashboardApiView(generics.GenericAPIView):
+    permission_classes = (IsAuthenticated,)
+    filter_backends = []
+
+    @swagger_auto_schema(
+        tags=["Management"],
+        operation_id='Management Dashboard',
+        operation_description=(
+            "Fetch authenticated user's management dashboard overview, "
+            "weekly score trend, and latest week day details."
+        ),
+    )
+    def get(self, request):
+        try:
+            weeks_count = self._get_weeks_count(request)
+            sessions = self._get_user_management_sessions(request.user)
+            data = self._build_dashboard_data(sessions, weeks_count)
+
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_200_OK
+            response_format["message"] = _success
+            response_format["status"] = True
+            response_format["data"] = data
+            return Response(response_format, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+            response_format["status"] = False
+            response_format["message"] = "Validation Error"
+            response_format["errors"] = e.detail
+            return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+    @staticmethod
+    def _get_weeks_count(request):
+        weeks_param = request.query_params.get('weeks', 6)
+        try:
+            weeks_count = int(weeks_param)
+        except (TypeError, ValueError):
+            raise ValidationError({'weeks': 'Use a number between 1 and 52.'})
+
+        if weeks_count < 1 or weeks_count > 52:
+            raise ValidationError({'weeks': 'Use a number between 1 and 52.'})
+
+        return weeks_count
+
+    @staticmethod
+    def _get_user_management_sessions(user):
+        return list(
+            FaceAttentionSession.objects
+            .filter(user=user, is_assessment=False)
+            .order_by('created_at', 'id')
+        )
+
+    @classmethod
+    def _build_dashboard_data(cls, sessions, weeks_count):
+        week_buckets = defaultdict(list)
+
+        for session in sessions:
+            session_date = timezone.localtime(session.created_at).date()
+            week_start = session_date - timedelta(days=session_date.weekday())
+            week_buckets[week_start].append(session)
+
+        week_starts = sorted(week_buckets.keys())
+        selected_week_starts = week_starts[-weeks_count:]
+        weekly_progress = [
+            cls._serialize_week(week_start, week_buckets[week_start], index + 1)
+            for index, week_start in enumerate(selected_week_starts)
+        ]
+
+        all_scores = [cls._session_score(session) for session in sessions]
+        weekly_scores = [
+            cls._average([cls._session_score(session) for session in week_buckets[week_start]])
+            for week_start in week_starts
+        ]
+
+        improvement = cls._build_improvement(weekly_progress)
+
+        return {
+            "overview": {
+                "weeks_tracked": len(week_starts),
+                "average_total_score": cls._average(all_scores),
+                "best_week_score": round(max(weekly_scores), 2) if weekly_scores else 0,
+                "consistency_percentage": cls._consistency_percentage(sessions),
+            },
+            "weekly_progress": {
+                "metric": "total_score",
+                "range_weeks": weeks_count,
+                "results": weekly_progress,
+                "improvement": improvement,
+            },
+        }
+
+    @classmethod
+    def _build_latest_week_data(cls, sessions, weeks_count):
+        week_buckets = defaultdict(list)
+        day_buckets = defaultdict(list)
+
+        for session in sessions:
+            session_date = timezone.localtime(session.created_at).date()
+            week_start = session_date - timedelta(days=session_date.weekday())
+            week_buckets[week_start].append(session)
+            day_buckets[session_date].append(session)
+
+        week_starts = sorted(week_buckets.keys())
+        selected_week_starts = week_starts[-weeks_count:]
+        if not selected_week_starts:
+            return cls._empty_latest_week()
+
+        latest_week_start = selected_week_starts[-1]
+        return cls._serialize_latest_week(
+            latest_week_start,
+            day_buckets,
+            selected_week_number=len(selected_week_starts),
+        )
+
+    @staticmethod
+    def _session_score(session):
+        return round((session.average_concentration_score / 8.0) * 100, 2)
+
+    @classmethod
+    def _serialize_week(cls, week_start, sessions, week_number):
+        scores = [cls._session_score(session) for session in sessions]
+        return {
+            "week_number": week_number,
+            "label": f"Wk {week_number}",
+            "start_date": week_start.isoformat(),
+            "end_date": (week_start + timedelta(days=6)).isoformat(),
+            "total_score": cls._average(scores),
+        }
+
+    @classmethod
+    def _serialize_latest_week(cls, week_start, day_buckets, selected_week_number):
+        days = []
+        for day_offset in range(7):
+            day = week_start + timedelta(days=day_offset)
+            sessions = day_buckets.get(day, [])
+            day_summary = cls._serialize_day(day, sessions)
+            days.append(day_summary)
+
+        selected_day = next((day for day in days if day["has_data"]), None)
+        if selected_day is None:
+            selected_day = days[0] if days else None
+
+        return {
+            "week_number": selected_week_number,
+            "start_date": week_start.isoformat(),
+            "end_date": (week_start + timedelta(days=6)).isoformat(),
+            "days": days,
+            "selected_day": selected_day,
+        }
+
+    @classmethod
+    def _serialize_day(cls, day, sessions):
+        scores = [cls._session_score(session) for session in sessions]
+        concentration_scores = [
+            round((session.concentration_score / 8.0) * 100, 2)
+            for session in sessions
+        ]
+        attention_scores = [session.attention_engagement_rate for session in sessions]
+        duration_seconds = sum(session.session_duration_seconds for session in sessions)
+        total_score = cls._average(scores)
+
+        return {
+            "date": day.isoformat(),
+            "day_label": day.strftime("%a"),
+            "day_number": day.day,
+            "has_data": bool(sessions),
+            "status_label": cls._day_status(total_score) if sessions else "",
+            "total_score": total_score,
+            "concentration_score": cls._average(concentration_scores),
+            "attention_score": cls._average(attention_scores),
+            "duration_seconds": round(duration_seconds, 2),
+            "duration_label": cls._format_duration(duration_seconds),
+            "sessions_count": len(sessions),
+        }
+
+    @staticmethod
+    def _average(values):
+        if not values:
+            return 0
+        return round(sum(values) / len(values), 2)
+
+    @staticmethod
+    def _consistency_percentage(sessions):
+        if not sessions:
+            return 0
+
+        session_dates = {
+            timezone.localtime(session.created_at).date()
+            for session in sessions
+        }
+        first_date = min(session_dates)
+        last_date = max(session_dates)
+        total_days = (last_date - first_date).days + 1
+        if total_days <= 0:
+            return 0
+        return round((len(session_dates) / total_days) * 100, 2)
+
+    @staticmethod
+    def _build_improvement(weekly_progress):
+        if len(weekly_progress) < 2:
+            return {
+                "points": 0,
+                "from_week": None,
+                "to_week": None,
+            }
+
+        first_week = weekly_progress[0]
+        last_week = weekly_progress[-1]
+        return {
+            "points": round(last_week["total_score"] - first_week["total_score"], 2),
+            "from_week": first_week["label"],
+            "to_week": last_week["label"],
+        }
+
+    @staticmethod
+    def _day_status(score):
+        if score >= 80:
+            return "Good Day"
+        if score >= 50:
+            return "Average Day"
+        return "Needs Focus"
+
+    @staticmethod
+    def _format_duration(total_seconds):
+        total_minutes = int(total_seconds // 60)
+        hours, minutes = divmod(total_minutes, 60)
+        if hours:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+
+    @staticmethod
+    def _empty_latest_week():
+        return {
+            "week_number": 0,
+            "start_date": None,
+            "end_date": None,
+            "days": [],
+            "selected_day": None,
+        }
+
+
+class ManagementLatestWeekApiView(generics.GenericAPIView):
+    permission_classes = (IsAuthenticated,)
+    filter_backends = []
+
+    @swagger_auto_schema(
+        tags=["Management"],
+        operation_id='Management Latest Week',
+        operation_description=(
+            "Fetch authenticated user's latest management week day details."
+        ),
+    )
+    def get(self, request):
+        try:
+            weeks_count = ManagementDashboardApiView._get_weeks_count(request)
+            sessions = ManagementDashboardApiView._get_user_management_sessions(request.user)
+            latest_week = ManagementDashboardApiView._build_latest_week_data(
+                sessions,
+                weeks_count,
+            )
+
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_200_OK
+            response_format["message"] = _success
+            response_format["status"] = True
+            response_format["data"] = latest_week
+            return Response(response_format, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+            response_format["status"] = False
+            response_format["message"] = "Validation Error"
+            response_format["errors"] = e.detail
+            return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
         

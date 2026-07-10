@@ -1,6 +1,8 @@
 import pytest
 from rest_framework import status
 from rest_framework.test import APIClient
+from django.utils import timezone
+from datetime import timedelta
 from apps.users.models import Users
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse
 from apps.filehandler.models import AdhdContent
@@ -40,6 +42,8 @@ def questions():
 class TestAssessmentViews:
     AI_SCORE_URL = '/api/assessment/v1/ai-assessment/score-history'
     AI_SCORE_SAVE_URL = '/api/assessment/v1/ai-assessment/save-score'
+    MANAGEMENT_DASHBOARD_URL = '/api/assessment/v1/management/dashboard'
+    MANAGEMENT_LATEST_WEEK_URL = '/api/assessment/v1/management/latest-week'
 
     def full_attention_payload(self, **overrides):
         content = overrides.pop('content', None)
@@ -80,6 +84,22 @@ class TestAssessmentViews:
         }
         payload.update(overrides)
         return payload
+
+    def create_management_session(self, user, *, days_ago, score, attention=80, duration=3600):
+        session = FaceAttentionSession.objects.create(
+            user=user,
+            is_assessment=False,
+            concentration_score=round((score / 100) * 8, 2),
+            average_concentration_score=round((score / 100) * 8, 2),
+            attention_engagement_rate=attention,
+            session_duration_seconds=duration,
+            total_processed_frames=100,
+            sampled_frames=100,
+        )
+        created_at = timezone.now() - timedelta(days=days_ago)
+        FaceAttentionSession.objects.filter(id=session.id).update(created_at=created_at)
+        session.created_at = created_at
+        return session
 
     def test_get_questions_adult(self, api_client, user, questions):
         api_client.force_authenticate(user=user)
@@ -195,6 +215,97 @@ class TestAssessmentViews:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data['errors']['is_assessment'] == 'Use true or false.'
+
+    def test_management_dashboard_empty_state(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_DASHBOARD_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+        assert response.data['data']['overview']['weeks_tracked'] == 0
+        assert response.data['data']['overview']['average_total_score'] == 0
+        assert response.data['data']['weekly_progress']['results'] == []
+        assert 'latest_week' not in response.data['data']
+
+    def test_management_dashboard_returns_user_based_summary(self, api_client, user):
+        other_user = Users.objects.create_user(
+            username='other_dashboard_user',
+            email='other_dashboard_user@test.com',
+            password='Password123!',
+            is_verified=True,
+        )
+        self.create_management_session(user, days_ago=35, score=62, attention=70, duration=1800)
+        self.create_management_session(user, days_ago=28, score=68, attention=72, duration=2400)
+        self.create_management_session(user, days_ago=21, score=74, attention=78, duration=3000)
+        self.create_management_session(user, days_ago=14, score=80, attention=82, duration=3600)
+        self.create_management_session(user, days_ago=7, score=71, attention=75, duration=1200)
+        self.create_management_session(user, days_ago=0, score=85, attention=84, duration=5100)
+        self.create_management_session(other_user, days_ago=0, score=10, attention=10, duration=60)
+        FaceAttentionSession.objects.create(
+            user=user,
+            is_assessment=True,
+            concentration_score=8,
+            average_concentration_score=8,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_DASHBOARD_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.data['data']
+        assert data['overview']['weeks_tracked'] == 6
+        assert data['overview']['average_total_score'] == 73.33
+        assert data['overview']['best_week_score'] == 85.0
+        assert len(data['weekly_progress']['results']) == 6
+        assert data['weekly_progress']['results'][-1]['total_score'] == 85.0
+        assert data['weekly_progress']['improvement']['points'] == 23.0
+        assert 'latest_week' not in data
+
+    def test_management_dashboard_rejects_invalid_weeks_filter(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_DASHBOARD_URL, {'weeks': 'many'})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['errors']['weeks'] == 'Use a number between 1 and 52.'
+
+    def test_management_latest_week_returns_only_latest_week_section(self, api_client, user):
+        self.create_management_session(user, days_ago=7, score=71, attention=75, duration=1200)
+        self.create_management_session(user, days_ago=0, score=85, attention=84, duration=5100)
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+        assert set(response.data['data'].keys()) == {
+            'week_number',
+            'start_date',
+            'end_date',
+            'days',
+            'selected_day',
+        }
+        assert response.data['data']['selected_day']['total_score'] == 85.0
+        assert response.data['data']['selected_day']['duration_label'] == '1h 25m'
+
+    def test_management_latest_week_empty_state(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['week_number'] == 0
+        assert response.data['data']['days'] == []
+        assert response.data['data']['selected_day'] is None
+
+    def test_management_latest_week_rejects_invalid_weeks_filter(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL, {'weeks': 0})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['errors']['weeks'] == 'Use a number between 1 and 52.'
 
     def test_save_frontend_attention_score(self, api_client, user):
         api_client.force_authenticate(user=user)
