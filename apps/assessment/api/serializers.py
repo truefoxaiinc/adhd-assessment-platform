@@ -7,6 +7,7 @@ from apps.progresstracker.models import (
     generate_attention_session_id,
 )
 from apps.progresstracker.services.track_services import ProgressTrackerActions
+from apps.assessment.cache import bump_user_management_cache
 from django.db import transaction
 from helpers.helper import get_token_user_or_none,get_object_or_none
 from rest_framework.exceptions import ValidationError
@@ -196,5 +197,8 @@ class FrontendAttentionScoreSerializer(serializers.Serializer):
                     raise ValidationError({
                         'file_id': 'Unable to update learning progress for this file.'
                     })
+
+            if not instance.is_assessment:
+                bump_user_management_cache(user.id)
 
         return instance

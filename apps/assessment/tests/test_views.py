@@ -1,6 +1,7 @@
 import pytest
 from rest_framework import status
 from rest_framework.test import APIClient
+from django.core.cache import cache
 from django.utils import timezone
 from datetime import timedelta
 from apps.users.models import Users
@@ -270,42 +271,69 @@ class TestAssessmentViews:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data['errors']['weeks'] == 'Use a number between 1 and 52.'
 
-    def test_management_latest_week_returns_only_latest_week_section(self, api_client, user):
+    def test_management_latest_week_returns_all_week_details(self, api_client, user):
+        cache.clear()
+        self.create_management_session(user, days_ago=14, score=62, attention=70, duration=900)
         self.create_management_session(user, days_ago=7, score=71, attention=75, duration=1200)
         self.create_management_session(user, days_ago=0, score=85, attention=84, duration=5100)
         api_client.force_authenticate(user=user)
 
-        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL, {'page': 1, 'limit': 2})
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] is True
         assert set(response.data['data'].keys()) == {
+            'links',
+            'count',
+            'page',
+            'limit',
+            'total_pages',
+            'results',
+        }
+        assert response.data['data']['count'] == 3
+        assert response.data['data']['page'] == 1
+        assert response.data['data']['limit'] == 2
+        assert response.data['data']['total_pages'] == 2
+        assert len(response.data['data']['results']) == 2
+        assert 'page=2' in response.data['data']['links']['next']
+        first_page_week = response.data['data']['results'][-1]
+        assert set(first_page_week.keys()) == {
             'week_number',
             'start_date',
             'end_date',
             'days',
             'selected_day',
         }
-        assert response.data['data']['selected_day']['total_score'] == 85.0
-        assert response.data['data']['selected_day']['duration_label'] == '1h 25m'
+        assert first_page_week['selected_day']['total_score'] == 71.0
+
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL, {'page': 2, 'limit': 2})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data['data']['results']) == 1
+        latest_week = response.data['data']['results'][0]
+        assert latest_week['selected_day']['total_score'] == 85.0
+        assert latest_week['selected_day']['duration_label'] == '1h 25m'
 
     def test_management_latest_week_empty_state(self, api_client, user):
+        cache.clear()
         api_client.force_authenticate(user=user)
 
         response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.data['data']['week_number'] == 0
-        assert response.data['data']['days'] == []
-        assert response.data['data']['selected_day'] is None
+        assert response.data['data']['count'] == 0
+        assert response.data['data']['page'] == 1
+        assert response.data['data']['limit'] == 10
+        assert response.data['data']['total_pages'] == 0
+        assert response.data['data']['results'] == []
 
-    def test_management_latest_week_rejects_invalid_weeks_filter(self, api_client, user):
+    def test_management_latest_week_rejects_invalid_pagination(self, api_client, user):
         api_client.force_authenticate(user=user)
 
-        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL, {'weeks': 0})
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL, {'page': 0})
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.data['errors']['weeks'] == 'Use a number between 1 and 52.'
+        assert response.data['errors']['page'] == 'Use a number greater than or equal to 1.'
 
     def test_save_frontend_attention_score(self, api_client, user):
         api_client.force_authenticate(user=user)

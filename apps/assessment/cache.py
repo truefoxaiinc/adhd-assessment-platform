@@ -7,6 +7,7 @@ from django.core.cache import cache
 ASSESSMENT_CACHE_TIMEOUT = 60 * 15
 QUESTIONS_CACHE_VERSION_KEY = 'assessment:questions:version'
 RESULT_CACHE_VERSION_KEY_TEMPLATE = 'assessment:result:user:{user_id}:version'
+MANAGEMENT_WEEK_DETAILS_VERSION_KEY_TEMPLATE = 'assessment:management:week-details:user:{user_id}:version'
 
 
 def cache_get(key, default=None):
@@ -55,6 +56,22 @@ def get_progress_cache_key(user_id, is_for_adults):
     return f'assessment:progress:user:{user_id}:adult:{is_for_adults}:qv{questions_version}:rv{result_version}'
 
 
+def get_management_week_details_cache_key(user_id, request):
+    version_key = MANAGEMENT_WEEK_DETAILS_VERSION_KEY_TEMPLATE.format(user_id=user_id)
+    version = cache_get(version_key, 1)
+    normalized_params = {
+        key: request.query_params.getlist(key)
+        for key in sorted(request.query_params.keys())
+    }
+    params_hash = hashlib.md5(json.dumps(normalized_params, sort_keys=True).encode()).hexdigest()
+    return f'assessment:management:week-details:user:{user_id}:v{version}:{params_hash}'
+
+
 def bump_user_result_cache(user_id):
     if user_id:
         bump_cache_version(RESULT_CACHE_VERSION_KEY_TEMPLATE.format(user_id=user_id))
+
+
+def bump_user_management_cache(user_id):
+    if user_id:
+        bump_cache_version(MANAGEMENT_WEEK_DETAILS_VERSION_KEY_TEMPLATE.format(user_id=user_id))

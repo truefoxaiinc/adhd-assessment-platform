@@ -11,6 +11,7 @@ import  os,sys
 import logging
 from collections import defaultdict
 from datetime import timedelta
+from math import ceil
 
 logger = logging.getLogger(__name__)
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
@@ -27,7 +28,14 @@ from .serializers import (
     FrontendAttentionScoreSerializer,
     SelfAssessmentResponseSerializer
 )
-from apps.assessment.cache import cache_get, cache_set, get_progress_cache_key, get_questions_cache_key, get_result_cache_key
+from apps.assessment.cache import (
+    cache_get,
+    cache_set,
+    get_management_week_details_cache_key,
+    get_progress_cache_key,
+    get_questions_cache_key,
+    get_result_cache_key,
+)
 
 
 class GetSelfAssessmentQuestionsListApiView(generics.GenericAPIView):
@@ -391,7 +399,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
         }
 
     @classmethod
-    def _build_latest_week_data(cls, sessions, weeks_count):
+    def _build_all_week_details(cls, sessions):
         week_buckets = defaultdict(list)
         day_buckets = defaultdict(list)
 
@@ -401,17 +409,59 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             week_buckets[week_start].append(session)
             day_buckets[session_date].append(session)
 
-        week_starts = sorted(week_buckets.keys())
-        selected_week_starts = week_starts[-weeks_count:]
-        if not selected_week_starts:
-            return cls._empty_latest_week()
+        return [
+            cls._serialize_week_details(
+                week_start,
+                day_buckets,
+                selected_week_number=index + 1,
+            )
+            for index, week_start in enumerate(sorted(week_buckets.keys()))
+        ]
 
-        latest_week_start = selected_week_starts[-1]
-        return cls._serialize_latest_week(
-            latest_week_start,
-            day_buckets,
-            selected_week_number=len(selected_week_starts),
-        )
+    @staticmethod
+    def _get_pagination_params(request):
+        try:
+            page = int(request.query_params.get('page', 1))
+            limit = int(request.query_params.get('limit', 10))
+        except (TypeError, ValueError):
+            raise ValidationError({
+                'pagination': 'Use numeric page and limit values.'
+            })
+
+        if page < 1:
+            raise ValidationError({'page': 'Use a number greater than or equal to 1.'})
+        if limit < 1 or limit > 52:
+            raise ValidationError({'limit': 'Use a number between 1 and 52.'})
+
+        return page, limit
+
+    @classmethod
+    def _paginate_week_details(cls, request, results, page, limit):
+        count = len(results)
+        total_pages = ceil(count / limit) if count else 0
+        start = (page - 1) * limit
+        end = start + limit
+
+        return {
+            "links": {
+                "next": cls._page_link(request, page + 1, total_pages),
+                "previous": cls._page_link(request, page - 1, total_pages),
+            },
+            "count": count,
+            "page": page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "results": results[start:end],
+        }
+
+    @staticmethod
+    def _page_link(request, page_number, total_pages):
+        if page_number < 1 or page_number > total_pages:
+            return ""
+
+        query_params = request.query_params.copy()
+        query_params['page'] = page_number
+        return f"{request.path}?{query_params.urlencode()}"
 
     @staticmethod
     def _session_score(session):
@@ -429,7 +479,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
         }
 
     @classmethod
-    def _serialize_latest_week(cls, week_start, day_buckets, selected_week_number):
+    def _serialize_week_details(cls, week_start, day_buckets, selected_week_number):
         days = []
         for day_offset in range(7):
             day = week_start + timedelta(days=day_offset)
@@ -529,16 +579,6 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             return f"{hours}h {minutes}m"
         return f"{minutes}m"
 
-    @staticmethod
-    def _empty_latest_week():
-        return {
-            "week_number": 0,
-            "start_date": None,
-            "end_date": None,
-            "days": [],
-            "selected_day": None,
-        }
-
 
 class ManagementLatestWeekApiView(generics.GenericAPIView):
     permission_classes = (IsAuthenticated,)
@@ -548,23 +588,32 @@ class ManagementLatestWeekApiView(generics.GenericAPIView):
         tags=["Management"],
         operation_id='Management Latest Week',
         operation_description=(
-            "Fetch authenticated user's latest management week day details."
+            "Fetch authenticated user's management week-by-week day details."
         ),
     )
     def get(self, request):
         try:
-            weeks_count = ManagementDashboardApiView._get_weeks_count(request)
+            page, limit = ManagementDashboardApiView._get_pagination_params(request)
+            cache_key = get_management_week_details_cache_key(request.user.id, request)
+            cached_response = cache_get(cache_key)
+            if cached_response:
+                return Response(cached_response, status=status.HTTP_200_OK)
+
             sessions = ManagementDashboardApiView._get_user_management_sessions(request.user)
-            latest_week = ManagementDashboardApiView._build_latest_week_data(
-                sessions,
-                weeks_count,
+            week_details = ManagementDashboardApiView._build_all_week_details(sessions)
+            paginated_week_details = ManagementDashboardApiView._paginate_week_details(
+                request,
+                week_details,
+                page,
+                limit,
             )
 
             response_format = ResponseInfo().response
             response_format['status_code'] = status.HTTP_200_OK
             response_format["message"] = _success
             response_format["status"] = True
-            response_format["data"] = latest_week
+            response_format["data"] = paginated_week_details
+            cache_set(cache_key, response_format)
             return Response(response_format, status=status.HTTP_200_OK)
         except ValidationError as e:
             response_format = ResponseInfo().response
