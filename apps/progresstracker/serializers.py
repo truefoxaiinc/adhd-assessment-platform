@@ -148,3 +148,62 @@ class UserGoalBulkCreateSerializer(serializers.Serializer):
             user.save(update_fields=update_fields)
 
         return goals
+
+
+class UserGoalBulkUpdateSerializer(serializers.Serializer):
+    goals = serializers.ListField(
+        child=serializers.DictField(),
+        allow_empty=False,
+        required=True,
+    )
+    is_last = serializers.BooleanField(required=False)
+
+    def validate_goals(self, value):
+        user = self.context['request'].user
+        normalized_goals = []
+
+        for index, goal_item in enumerate(value):
+            goal_id = goal_item.get('id')
+            if not goal_id:
+                raise serializers.ValidationError({
+                    index: {'id': 'This field is required.'}
+                })
+
+            instance = UserGoal.objects.filter(id=goal_id, user=user).first()
+            if instance is None:
+                raise serializers.ValidationError({
+                    index: {'id': 'Invalid goal id.'}
+                })
+
+            serializer = UserGoalSerializer(instance, data=goal_item, partial=True)
+            if not serializer.is_valid():
+                raise serializers.ValidationError({
+                    index: serializer.errors
+                })
+
+            normalized_goals.append({
+                'instance': instance,
+                'data': serializer.validated_data,
+            })
+
+        return normalized_goals
+
+    def save(self):
+        user = self.context['request'].user
+        updated_goals = []
+
+        for goal_item in self.validated_data['goals']:
+            instance = goal_item['instance']
+            data = goal_item['data']
+            instance.goal = data.get('goal', instance.goal)
+            instance.rating = data.get('rating', instance.rating)
+            instance.save()
+            updated_goals.append(instance)
+
+        if 'is_last' in self.validated_data:
+            user.is_last = self.validated_data['is_last']
+            if user.is_last:
+                user.is_first = False
+            user.save(update_fields=['is_first', 'is_last'])
+
+        return updated_goals

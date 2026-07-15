@@ -72,6 +72,42 @@ class TestUserGoals:
         goal.refresh_from_db()
         assert goal.rating == 5
 
+    def test_user_can_bulk_update_multiple_goals(self, api_client, user):
+        first_goal = UserGoal.objects.create(user=user, goal='Improve focus', rating=2)
+        second_goal = UserGoal.objects.create(user=user, goal='Complete course', rating=3)
+        api_client.force_authenticate(user=user)
+
+        response = api_client.patch(
+            self.GOALS_URL,
+            {
+                'goals': [
+                    {
+                        'id': first_goal.id,
+                        'goal': 'Improve daily focus',
+                        'rating': 4,
+                    },
+                    {
+                        'id': second_goal.id,
+                        'rating': 5,
+                    },
+                ],
+                'is_last': True,
+            },
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['is_last'] is True
+        assert len(response.data['data']) == 2
+        first_goal.refresh_from_db()
+        second_goal.refresh_from_db()
+        user.refresh_from_db()
+        assert first_goal.goal == 'Improve daily focus'
+        assert first_goal.rating == 4
+        assert second_goal.rating == 5
+        assert user.is_first is False
+        assert user.is_last is True
+
     def test_user_can_mark_last_using_goal_api(self, api_client, user):
         goal = UserGoal.objects.create(user=user, goal='Complete course', rating=4)
         api_client.force_authenticate(user=user)
@@ -105,5 +141,31 @@ class TestUserGoals:
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+        other_goal.refresh_from_db()
+        assert other_goal.rating == 1
+
+    def test_user_cannot_bulk_update_another_users_goal(self, api_client, user):
+        other_user = Users.objects.create_user(
+            username='other_bulk_goal_user',
+            email='other_bulk_goal_user@test.com',
+            password='Password123!',
+        )
+        other_goal = UserGoal.objects.create(user=other_user, goal='Private goal', rating=1)
+        api_client.force_authenticate(user=user)
+
+        response = api_client.patch(
+            self.GOALS_URL,
+            {
+                'goals': [
+                    {
+                        'id': other_goal.id,
+                        'rating': 5,
+                    },
+                ],
+            },
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
         other_goal.refresh_from_db()
         assert other_goal.rating == 1

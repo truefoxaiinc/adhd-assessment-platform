@@ -11,6 +11,7 @@ from apps.progresstracker.models import UserGoal
 from apps.progresstracker.serializers import (
     SaveDailyCompletedStatusSerializer,
     UserGoalBulkCreateSerializer,
+    UserGoalBulkUpdateSerializer,
     UserGoalSerializer,
 )
 from apps.users.models import (
@@ -111,6 +112,30 @@ class UserGoalListCreateApiView(generics.GenericAPIView):
             goals = serializer.save()
             self.build_response(self.response_format, request.user, goals, status.HTTP_201_CREATED)
             return Response(self.response_format, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+    @swagger_auto_schema(
+        tags=["User Goals"],
+        request_body=UserGoalBulkUpdateSerializer,
+        operation_id='user-goals-bulk-update',
+        operation_description="Update multiple authenticated user goals in one request.",
+    )
+    def patch(self, request):
+        try:
+            serializer = UserGoalBulkUpdateSerializer(
+                data=request.data,
+                context={'request': request},
+            )
+            if not serializer.is_valid():
+                self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+                self.response_format["status"] = False
+                self.response_format["errors"] = serializer.errors
+                return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
+
+            goals = serializer.save()
+            self.build_response(self.response_format, request.user, goals, status.HTTP_200_OK)
+            return Response(self.response_format, status=status.HTTP_200_OK)
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
 
