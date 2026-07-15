@@ -17,16 +17,10 @@ from apps.progresstracker.serializers import (
 from apps.users.models import (
     Users,
 )
-from drf_yasg import openapi
 from helpers.custom_messages import _success,_record_not_found
-from .schemas import (
-    GetUserProfileDetailSchema
-)
 from apps.authentication.schemas import (
     GetLoginResponseSchema
 )
-from django.core.mail import send_mail
-from django.conf import settings
 from helpers.exceptions.exceptions import safe_exception_response
 from django.utils import timezone
 
