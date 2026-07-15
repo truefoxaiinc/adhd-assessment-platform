@@ -3,7 +3,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 
-from .models import UserAssessmentDetails, ProgressTracker, FaceAttentionSession
+from .models import UserAssessmentDetails, ProgressTracker, FaceAttentionSession, UserGoal
 
 
 @admin.register(UserAssessmentDetails)
@@ -68,3 +68,18 @@ class FaceAttentionSessionAdmin(ModelAdmin):
         if score >= 50:
             return format_html('<span class="text-amber-700 font-semibold">Watch</span>')
         return format_html('<span class="text-red-700 font-semibold">Low</span>')
+
+
+@admin.register(UserGoal)
+class UserGoalAdmin(ModelAdmin):
+    list_display = ('id', 'user', 'short_goal', 'rating', 'is_first', 'is_last', 'created_at')
+    list_filter = ('is_first', 'is_last', 'rating', 'created_at')
+    search_fields = ('user__email', 'user__username', 'goal')
+    ordering = ('user', 'created_at', 'id')
+    list_per_page = 25
+
+    @admin.display(description='Goal')
+    def short_goal(self, obj):
+        if len(obj.goal) <= 60:
+            return obj.goal
+        return f'{obj.goal[:57]}...'

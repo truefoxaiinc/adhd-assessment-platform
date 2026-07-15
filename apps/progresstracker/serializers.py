@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.progresstracker.models import UserAssessmentDetails,ProgressTracker
+from apps.progresstracker.models import UserAssessmentDetails,ProgressTracker,UserGoal
 from django.utils.translation import gettext_lazy as _
 from helpers.helper import get_object_or_none
 
@@ -63,3 +63,70 @@ class SaveDailyCompletedStatusSerializer(serializers.Serializer):
             'user': user
         })
         return instance
+
+
+class UserGoalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserGoal
+        fields = [
+            'id',
+            'goal',
+            'rating',
+            'is_first',
+            'is_last',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'is_first', 'created_at', 'updated_at']
+
+    def validate_rating(self, value):
+        if value < 0 or value > 5:
+            raise serializers.ValidationError('Use a rating between 0 and 5.')
+        return value
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        instance = UserGoal.objects.create(user=user, **validated_data)
+        if instance.is_last:
+            UserGoal.objects.filter(user=user).exclude(pk=instance.pk).update(is_last=False)
+        return instance
+
+    def update(self, instance, validated_data):
+        instance.goal = validated_data.get('goal', instance.goal)
+        instance.rating = validated_data.get('rating', instance.rating)
+        instance.is_last = validated_data.get('is_last', instance.is_last)
+        instance.save()
+
+        if instance.is_last:
+            UserGoal.objects.filter(user=instance.user).exclude(pk=instance.pk).update(is_last=False)
+
+        return instance
+
+
+class UserGoalListItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserGoal
+        fields = [
+            'id',
+            'goal',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class UserGoalBulkCreateSerializer(serializers.Serializer):
+    goals = serializers.ListField(
+        child=serializers.CharField(allow_blank=False, trim_whitespace=True),
+        allow_empty=False,
+        required=True,
+    )
+    rating = serializers.IntegerField(required=False, default=0, min_value=0, max_value=5)
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        rating = validated_data.get('rating', 0)
+        return [
+            UserGoal.objects.create(user=user, goal=goal, rating=rating)
+            for goal in validated_data['goals']
+        ]

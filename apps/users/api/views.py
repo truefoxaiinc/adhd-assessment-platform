@@ -28,6 +28,7 @@ from apps.users.models import (
     Users
 )
 from apps.users.services.password_reset_service import PasswordResetService
+from apps.users.services.registration_service import RegistrationService
 from drf_yasg import openapi
 from helpers.custom_messages import _success,_record_not_found
 from apps.users.schemas import (
@@ -519,6 +520,8 @@ class SocialLoginView(APIView):
                 'email_verified': identity['email_verified'],
             },
         )
+        if created:
+            RegistrationService.ensure_initial_goal(user)
         return user, created
 
     @swagger_auto_schema(tags=["Social Login"],request_body=SocialLoginSerializer,operation_id='Social Login API',operation_description="This API allows the users to login using social media accounts",)

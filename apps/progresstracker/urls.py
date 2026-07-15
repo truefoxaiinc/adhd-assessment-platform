@@ -7,6 +7,8 @@ urlpatterns = [
     re_path(r'^v1/', include([
         re_path(r'^progress-track/', include([
             path('save-daily-status', views.SaveDailyCompletedStatus.as_view()),
+            path('goals', views.UserGoalListCreateApiView.as_view()),
+            path('goals/<int:goal_id>', views.UserGoalUpdateApiView.as_view()),
         ])),
 
     ]))

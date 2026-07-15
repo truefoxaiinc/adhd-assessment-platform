@@ -59,6 +59,7 @@ urlpatterns = [
         path('filehandler/',include('apps.filehandler.urls')),
         path('articles/',include('apps.articles.urls')),
         path('payments/',include('apps.payments.urls')),
+        path('progresstracker/',include('apps.progresstracker.urls')),
 
         re_path(r'^docs/', include([
             path('', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
