@@ -66,12 +66,15 @@ class SaveDailyCompletedStatusSerializer(serializers.Serializer):
 
 
 class UserGoalSerializer(serializers.ModelSerializer):
+    is_last = serializers.BooleanField(required=False, write_only=True)
+
     class Meta:
         model = UserGoal
         fields = [
             'id',
             'goal',
             'rating',
+            'is_last',
             'created_at',
         ]
         read_only_fields = ['id', 'created_at']
@@ -88,8 +91,24 @@ class UserGoalSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
+        validated_data.pop('is_last', None)
         user = self.context['request'].user
         return UserGoal.objects.create(user=user, **validated_data)
+
+    def update(self, instance, validated_data):
+        is_last = validated_data.pop('is_last', None)
+        instance.goal = validated_data.get('goal', instance.goal)
+        instance.rating = validated_data.get('rating', instance.rating)
+        instance.save()
+
+        if is_last is not None:
+            user = self.context['request'].user
+            user.is_last = is_last
+            if user.is_last:
+                user.is_first = False
+            user.save(update_fields=['is_first', 'is_last'])
+
+        return instance
 
 
 class UserGoalBulkCreateSerializer(serializers.Serializer):
@@ -98,6 +117,7 @@ class UserGoalBulkCreateSerializer(serializers.Serializer):
         allow_empty=False,
         required=True,
     )
+    is_last = serializers.BooleanField(required=False, default=False)
 
     def validate_goals(self, value):
         normalized_goals = []
@@ -112,7 +132,19 @@ class UserGoalBulkCreateSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         user = self.context['request'].user
-        return [
+        goals = [
             UserGoal.objects.create(user=user, **goal)
             for goal in validated_data['goals']
         ]
+
+        update_fields = []
+        if user.is_first:
+            user.is_first = False
+            update_fields.append('is_first')
+        if validated_data.get('is_last') is True and not user.is_last:
+            user.is_last = True
+            update_fields.append('is_last')
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+        return goals
