@@ -36,7 +36,6 @@ class UsersAdmin(ModelAdmin, DjangoUserAdmin):
     )
     search_fields = ('email', 'username')
     ordering = ('-id',)
-    raw_id_fields = ('groups', 'user_permissions')
     readonly_fields = ('last_login',)
     list_per_page = 25
 
@@ -70,8 +69,6 @@ class UsersAdmin(ModelAdmin, DjangoUserAdmin):
                 'is_deleted',
                 'is_first',
                 'is_last',
-                'groups',
-                'user_permissions',
             )
         }),
         ('Important dates', {'fields': ('last_login',)}),
