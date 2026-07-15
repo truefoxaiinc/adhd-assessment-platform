@@ -51,6 +51,8 @@ class Users(AbstractBaseUser, PermissionsMixin):
     is_staff              = models.BooleanField(default = False)
     is_superuser          = models.BooleanField(default = False)
     is_deleted            = models.BooleanField(default = False)
+    is_first              = models.BooleanField(default = True)
+    is_last               = models.BooleanField(default = False)
     ai_assessment_score   = models.FloatField(_('AI Assessment Score'), blank=True, null=True)
 
     USERNAME_FIELD = 'email'

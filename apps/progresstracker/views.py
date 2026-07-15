@@ -11,7 +11,6 @@ from apps.progresstracker.models import UserGoal
 from apps.progresstracker.serializers import (
     SaveDailyCompletedStatusSerializer,
     UserGoalBulkCreateSerializer,
-    UserGoalListItemSerializer,
     UserGoalSerializer,
 )
 from apps.users.models import (
@@ -22,7 +21,6 @@ from apps.authentication.schemas import (
     GetLoginResponseSchema
 )
 from helpers.exceptions.exceptions import safe_exception_response
-from django.utils import timezone
 
 
 class SaveDailyCompletedStatus(generics.GenericAPIView):
@@ -73,25 +71,13 @@ class UserGoalListCreateApiView(generics.GenericAPIView):
         super(UserGoalListCreateApiView, self).__init__(**kwargs)
 
     @staticmethod
-    def expire_old_first_goals(user):
-        UserGoal.objects.filter(
-            user=user,
-            is_first=True,
-            created_at__date__lt=timezone.localdate(),
-        ).update(is_first=False)
-
-    @staticmethod
-    def build_goal_response(response_format, goals, http_status):
-        goals = list(goals)
+    def build_response(response_format, user, goals, http_status):
         response_format['status_code'] = http_status
         response_format["status"] = True
         response_format["message"] = _success
-        response_format["is_first"] = any(goal.is_first for goal in goals)
-        response_format["is_last"] = any(goal.is_last for goal in goals)
-        last_goal = next((goal for goal in reversed(goals) if goal.is_last), None)
-        rating_goal = last_goal or (goals[-1] if goals else None)
-        response_format["rating"] = rating_goal.rating if rating_goal else 0
-        response_format["data"] = UserGoalListItemSerializer(goals, many=True).data
+        response_format["is_first"] = user.is_first
+        response_format["is_last"] = user.is_last
+        response_format["data"] = UserGoalSerializer(goals, many=True).data
         return response_format
 
     @swagger_auto_schema(
@@ -101,10 +87,8 @@ class UserGoalListCreateApiView(generics.GenericAPIView):
     )
     def get(self, request):
         try:
-            self.expire_old_first_goals(request.user)
             goals = UserGoal.objects.filter(user=request.user).order_by('created_at', 'id')
-
-            self.build_goal_response(self.response_format, goals, status.HTTP_200_OK)
+            self.build_response(self.response_format, request.user, goals, status.HTTP_200_OK)
             return Response(self.response_format, status=status.HTTP_200_OK)
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
@@ -113,11 +97,10 @@ class UserGoalListCreateApiView(generics.GenericAPIView):
         tags=["User Goals"],
         request_body=UserGoalBulkCreateSerializer,
         operation_id='user-goals-create',
-        operation_description="Add one or more goals for authenticated user.",
+        operation_description="Add one or more goals with individual ratings for authenticated user.",
     )
     def post(self, request):
         try:
-            self.expire_old_first_goals(request.user)
             serializer = self.serializer_class(data=request.data, context={'request': request})
             if not serializer.is_valid():
                 self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
@@ -126,8 +109,7 @@ class UserGoalListCreateApiView(generics.GenericAPIView):
                 return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
 
             goals = serializer.save()
-
-            self.build_goal_response(self.response_format, goals, status.HTTP_201_CREATED)
+            self.build_response(self.response_format, request.user, goals, status.HTTP_201_CREATED)
             return Response(self.response_format, status=status.HTTP_201_CREATED)
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
@@ -149,11 +131,10 @@ class UserGoalUpdateApiView(generics.GenericAPIView):
         tags=["User Goals"],
         request_body=UserGoalSerializer,
         operation_id='user-goals-update',
-        operation_description="Update authenticated user's goal, rating, or course-completion final flag.",
+        operation_description="Update authenticated user's goal text or rating.",
     )
     def patch(self, request, goal_id):
         try:
-            UserGoalListCreateApiView.expire_old_first_goals(request.user)
             goal = self.get_object(request, goal_id)
             if goal is None:
                 self.response_format['status_code'] = status.HTTP_404_NOT_FOUND
@@ -161,12 +142,7 @@ class UserGoalUpdateApiView(generics.GenericAPIView):
                 self.response_format["message"] = _record_not_found
                 return Response(self.response_format, status=status.HTTP_404_NOT_FOUND)
 
-            serializer = self.serializer_class(
-                goal,
-                data=request.data,
-                partial=True,
-                context={'request': request},
-            )
+            serializer = self.serializer_class(goal, data=request.data, partial=True)
             if not serializer.is_valid():
                 self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
                 self.response_format["status"] = False
@@ -174,10 +150,10 @@ class UserGoalUpdateApiView(generics.GenericAPIView):
                 return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
 
             goal = serializer.save()
-            goals = UserGoal.objects.filter(user=request.user).order_by('created_at', 'id')
-            UserGoalListCreateApiView.build_goal_response(
+            UserGoalListCreateApiView.build_response(
                 self.response_format,
-                goals,
+                request.user,
+                [goal],
                 status.HTTP_200_OK,
             )
             return Response(self.response_format, status=status.HTTP_200_OK)

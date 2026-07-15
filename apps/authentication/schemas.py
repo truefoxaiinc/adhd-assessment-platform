@@ -11,7 +11,7 @@ class GetLoginResponseSchema(serializers.ModelSerializer):
 
     class Meta:
         model = Users
-        fields = ['id','username','email','tokens']
+        fields = ['id','username','email','is_first','is_last','tokens']
 
     def get_tokens(self,instance):
         refresh = RefreshToken.for_user(instance)

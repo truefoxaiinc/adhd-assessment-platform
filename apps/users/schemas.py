@@ -20,6 +20,8 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
             'weight',
             'profile_image',
             'profile_image_url',
+            'is_first',
+            'is_last',
             'is_completed',
         ]
 

@@ -88,15 +88,12 @@ class ProgressTracker(models.Model):
 
 class UserGoal(models.Model):
     user       = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='goals')
-    goal       = models.TextField(_('Goal'), blank=True, default='')
+    goal       = models.TextField(_('Goal'))
     rating     = models.PositiveSmallIntegerField(_('Rating'), default=0)
-    is_first   = models.BooleanField(_('Is First Goal'), default=False)
-    is_last    = models.BooleanField(_('Is Last Goal'), default=False)
     created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
-    updated_at = models.DateTimeField(_('Updated At'), auto_now=True)
 
     def __str__(self):
-        return f"{self.user.username} - Goal {self.id}"
+        return f"{self.user.username} - {self.goal[:40]}"
 
     class Meta:
         verbose_name = _("UserGoal")
@@ -104,6 +101,5 @@ class UserGoal(models.Model):
         db_table = 'UserGoal'
         ordering = ['created_at', 'id']
         indexes = [
-            models.Index(fields=['user', 'is_first'], name='user_goal_first_idx'),
-            models.Index(fields=['user', 'is_last'], name='user_goal_last_idx'),
+            models.Index(fields=['user', 'created_at'], name='user_goal_created_idx'),
         ]

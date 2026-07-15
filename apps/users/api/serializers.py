@@ -65,10 +65,11 @@ class UserUpdateProfileSerializer(serializers.ModelSerializer):
     height      = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     weight      = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     profile_image = serializers.ImageField(required=False, allow_null=True)
+    is_last     = serializers.BooleanField(required=False)
 
     class Meta:
         model = Users
-        fields = ['id','username','email','password','dob','gender','country','height','weight','profile_image']
+        fields = ['id','username','email','password','dob','gender','country','height','weight','profile_image','is_last']
 
     def validate(self, attrs):
         email           = attrs.get('email', '')
@@ -96,6 +97,7 @@ class UserUpdateProfileSerializer(serializers.ModelSerializer):
 
         if password and (len(password) < 8 or not any(char.isupper() for char in password) or not any(char.islower() for char in password) or not any(char.isdigit() for char in password) or not any(char in '!@#$%^&*()_+-=[]{}|;:,.<>?\'\"\\/~`' for char in password)):
             raise serializers.ValidationError({"password":('Must Contain 8 Characters, One Uppercase, One Lowercase, One Number and One Special Character')})
+
         return super().validate(attrs)
 
 
@@ -111,6 +113,10 @@ class UserUpdateProfileSerializer(serializers.ModelSerializer):
         instance.weight     = validated_data.get('weight', instance.weight)
         if 'profile_image' in validated_data:
             instance.profile_image = validated_data.get('profile_image')
+        if 'is_last' in validated_data:
+            instance.is_last = validated_data.get('is_last')
+            if instance.is_last:
+                instance.is_first = False
         if password:
             instance.set_password(password)
         instance.save()

@@ -15,6 +15,8 @@ class UsersAdmin(ModelAdmin, DjangoUserAdmin):
         'username',
         'account_status',
         'staff_status',
+        'is_first',
+        'is_last',
         'dob',
         'gender',
         'country',
@@ -29,6 +31,8 @@ class UsersAdmin(ModelAdmin, DjangoUserAdmin):
         'is_staff',
         'is_superuser',
         'is_deleted',
+        'is_first',
+        'is_last',
     )
     search_fields = ('email', 'username')
     ordering = ('-id',)
@@ -64,6 +68,8 @@ class UsersAdmin(ModelAdmin, DjangoUserAdmin):
                 'is_staff',
                 'is_superuser',
                 'is_deleted',
+                'is_first',
+                'is_last',
                 'groups',
                 'user_permissions',
             )

@@ -72,8 +72,8 @@ class FaceAttentionSessionAdmin(ModelAdmin):
 
 @admin.register(UserGoal)
 class UserGoalAdmin(ModelAdmin):
-    list_display = ('id', 'user', 'short_goal', 'rating', 'is_first', 'is_last', 'created_at')
-    list_filter = ('is_first', 'is_last', 'rating', 'created_at')
+    list_display = ('id', 'user', 'short_goal', 'rating', 'created_at')
+    list_filter = ('rating', 'created_at')
     search_fields = ('user__email', 'user__username', 'goal')
     ordering = ('user', 'created_at', 'id')
     list_per_page = 25

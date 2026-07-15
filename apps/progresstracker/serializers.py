@@ -72,12 +72,15 @@ class UserGoalSerializer(serializers.ModelSerializer):
             'id',
             'goal',
             'rating',
-            'is_first',
-            'is_last',
             'created_at',
-            'updated_at',
         ]
-        read_only_fields = ['id', 'is_first', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at']
+
+    def validate_goal(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('Goal is required.')
+        return value
 
     def validate_rating(self, value):
         if value < 0 or value > 5:
@@ -86,47 +89,30 @@ class UserGoalSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = self.context['request'].user
-        instance = UserGoal.objects.create(user=user, **validated_data)
-        if instance.is_last:
-            UserGoal.objects.filter(user=user).exclude(pk=instance.pk).update(is_last=False)
-        return instance
-
-    def update(self, instance, validated_data):
-        instance.goal = validated_data.get('goal', instance.goal)
-        instance.rating = validated_data.get('rating', instance.rating)
-        instance.is_last = validated_data.get('is_last', instance.is_last)
-        instance.save()
-
-        if instance.is_last:
-            UserGoal.objects.filter(user=instance.user).exclude(pk=instance.pk).update(is_last=False)
-
-        return instance
-
-
-class UserGoalListItemSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = UserGoal
-        fields = [
-            'id',
-            'goal',
-            'created_at',
-            'updated_at',
-        ]
-        read_only_fields = fields
+        return UserGoal.objects.create(user=user, **validated_data)
 
 
 class UserGoalBulkCreateSerializer(serializers.Serializer):
     goals = serializers.ListField(
-        child=serializers.CharField(allow_blank=False, trim_whitespace=True),
+        child=serializers.DictField(),
         allow_empty=False,
         required=True,
     )
-    rating = serializers.IntegerField(required=False, default=0, min_value=0, max_value=5)
+
+    def validate_goals(self, value):
+        normalized_goals = []
+        for index, goal_item in enumerate(value):
+            serializer = UserGoalSerializer(data=goal_item)
+            if not serializer.is_valid():
+                raise serializers.ValidationError({
+                    index: serializer.errors
+                })
+            normalized_goals.append(serializer.validated_data)
+        return normalized_goals
 
     def create(self, validated_data):
         user = self.context['request'].user
-        rating = validated_data.get('rating', 0)
         return [
-            UserGoal.objects.create(user=user, goal=goal, rating=rating)
+            UserGoal.objects.create(user=user, **goal)
             for goal in validated_data['goals']
         ]
