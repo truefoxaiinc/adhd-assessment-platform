@@ -283,23 +283,23 @@ AUTH_USER_MODEL = 'users.Users'
 # DATABASE_ENGINE = config('DATABASE_ENGINE', default='sqlite').lower()
 
 # if DATABASE_ENGINE == 'postgres':
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': config('DB_NAME', default='truefoxai_db'),
-#         'USER': config('DB_USER', default='postgres'),
-#         'PASSWORD': get_secret_config('DATABASE_PASSWORD', aliases=('DB_PASSWORD',), default='postgres'),
-#         'HOST': config('DB_HOST', default='localhost'),
-#         'PORT': config('DB_PORT', default='5432'),
-#     }
-# }
-
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': config('DB_NAME', default='truefoxai_db'),
+        'USER': config('DB_USER', default='postgres'),
+        'PASSWORD': get_secret_config('DATABASE_PASSWORD', aliases=('DB_PASSWORD',), default='postgres'),
+        'HOST': config('DB_HOST', default='localhost'),
+        'PORT': config('DB_PORT', default='5432'),
     }
 }
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
 
 CACHES = {
     "default": {
