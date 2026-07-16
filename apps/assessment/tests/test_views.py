@@ -172,12 +172,69 @@ class TestAssessmentViews:
 
     def test_fetch_result(self, api_client, user):
         api_client.force_authenticate(user=user)
-        SelfAssessmentResult.objects.create(user=user, result="High Risk", tenscore=8.5)
+        SelfAssessmentResult.objects.create(
+            user=user,
+            result="High Risk",
+            tenscore=8.5,
+            completed_at=timezone.now(),
+        )
         url = '/api/assessment/v1/self-assessment/fetch-result'
         response = api_client.get(url)
         assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] is True
         assert response.data['data']['result'] == "High Risk"
+
+    def test_fetch_result_finalizes_complete_pending_attempt(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        question = SelfAssessmentQuestions.objects.create(
+            question_text="Adult Question",
+            category='RF',
+            is_for_adults=True,
+            is_active=True,
+        )
+        result = SelfAssessmentResult.objects.create(user=user)
+        SelfAssessmentResponse.objects.create(
+            result_entry=result,
+            question=question,
+            response='4',
+        )
+
+        response = api_client.get('/api/assessment/v1/self-assessment/fetch-result')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+        assert response.data['data']['is_completed'] is True
+        assert response.data['data']['raw_total'] == 4
+        assert response.data['data']['tenscore'] == 10
+
+    def test_fetch_result_returns_progress_for_incomplete_attempt(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        answered_question = SelfAssessmentQuestions.objects.create(
+            question_text="Answered Adult Question",
+            is_for_adults=True,
+            is_active=True,
+        )
+        SelfAssessmentQuestions.objects.create(
+            question_text="Pending Adult Question",
+            is_for_adults=True,
+            is_active=True,
+        )
+        result = SelfAssessmentResult.objects.create(user=user)
+        SelfAssessmentResponse.objects.create(
+            result_entry=result,
+            question=answered_question,
+            response='2',
+        )
+
+        response = api_client.get('/api/assessment/v1/self-assessment/fetch-result')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+        assert response.data['data']['is_completed'] is False
+        assert response.data['data']['total_questions'] == 2
+        assert response.data['data']['answered_questions'] == 1
+        assert response.data['data']['pending_questions'] == 1
+        assert response.data['data']['completed_percentage'] == 50.0
 
     def test_ai_score_history_filters_assessment_sessions(self, api_client, user):
         other_user = Users.objects.create_user(

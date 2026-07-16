@@ -18,6 +18,7 @@ from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentRespon
 from apps.assessment.selectors import get_active_questions_for_user_type
 from helpers.custom_messages import _success,_record_not_found
 from apps.assessment.services.scoring_service import ScoringService
+from apps.assessment.services.assessment_service import AssessmentService
 from apps.assessment.schemas import (
     AIAssessmentScoreSchema, SelfAssessmentQuestionsListSchema,
     SelfAssessmentResultSchema,
@@ -131,11 +132,26 @@ class ResultFetchApiView(generics.GenericAPIView):
 
         try:
             user_instance   = get_token_user_or_none(request)
+            is_for_adults = bool(user_instance.adult)
             
             cache_key = get_result_cache_key(user_instance.id)
             cached_data = cache_get(cache_key)
             if cached_data:
-                return Response(cached_data, status=status.HTTP_200_OK)
+                cached_result = cached_data.get("data") or {}
+                if cached_result.get("is_completed") is True or cached_result.get("completed_at"):
+                    return Response(cached_data, status=status.HTTP_200_OK)
+
+            latest_result = (
+                SelfAssessmentResult.objects
+                .filter(user=user_instance)
+                .order_by('-id')
+                .first()
+            )
+            if latest_result and latest_result.completed_at is None:
+                latest_result = AssessmentService.calculate_result(
+                    latest_result,
+                    is_for_adults,
+                )
 
             instance = (
                 SelfAssessmentResult.objects
@@ -150,20 +166,60 @@ class ResultFetchApiView(generics.GenericAPIView):
                     'read_focus_total',
                     'visual_tracking_total',
                     'audio_listening_total',
+                    'created_at',
+                    'completed_at',
                 )
                 .filter(user=user_instance)
                 .filter(completed_at__isnull=False)
                 .order_by('-id')
                 .first()
             )
-            data            = SelfAssessmentResultSchema(instance, context={'request': request}).data
+            if instance is not None:
+                data = SelfAssessmentResultSchema(instance, context={'request': request}).data
+            else:
+                completion = {
+                    "total_questions": 0,
+                    "answered_questions": 0,
+                    "pending_questions": 0,
+                    "completed_percentage": 0,
+                }
+                if latest_result is not None:
+                    completion = AssessmentService.get_completion_summary(
+                        latest_result,
+                        is_for_adults,
+                    )
+                    data = SelfAssessmentResultSchema(
+                        latest_result,
+                        context={'request': request},
+                    ).data
+                else:
+                    data = {
+                        "id": "",
+                        "user": user_instance.username or "",
+                        "result": "",
+                        "raw_total": "",
+                        "tenscore": "",
+                        "read_focus_total": "",
+                        "visual_tracking_total": "",
+                        "audio_listening_total": "",
+                        "is_completed": False,
+                        "created_at": "",
+                        "completed_at": "",
+                    }
+                data.update({
+                    "total_questions": completion["total_questions"],
+                    "answered_questions": completion["answered_questions"],
+                    "pending_questions": completion["pending_questions"],
+                    "completed_percentage": completion["completed_percentage"],
+                })
 
             self.response_format['status_code'] = status.HTTP_200_OK
             self.response_format["message"] = _success
             self.response_format["status"] = True
             self.response_format["data"] = data
             
-            cache_set(cache_key, self.response_format)
+            if data.get("is_completed") is True:
+                cache_set(cache_key, self.response_format)
             return Response(self.response_format, status=status.HTTP_200_OK)
 
         except Exception as e:

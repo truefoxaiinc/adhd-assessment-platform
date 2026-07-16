@@ -41,7 +41,9 @@ class SelfAssessmentSubSerializer(serializers.ModelSerializer):
         instance = SelfAssessmentResponse.objects.filter(result_entry=result_instance,question=question_instance).first()
 
         if instance:
-            # Silently ignore to prevent 400 error when frontend sends already answered questions
+            instance.response = validated_data.get('response')
+            instance.text_response = validated_data.get('text_response', None)
+            instance.save(update_fields=['response', 'text_response'])
             return instance
 
         instance                = SelfAssessmentResponse()
