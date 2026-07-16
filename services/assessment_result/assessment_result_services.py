@@ -1,6 +1,5 @@
 from django.db.models import Q
 from apps.assessment.models import SelfAssessmentResponse,SelfAssessmentResult
-from apps.progresstracker.models import UserAssessmentDetails
 
 class ResultService:
     def __init__(self,instance,is_adult=False):
@@ -8,19 +7,6 @@ class ResultService:
         self.is_adult         = is_adult
         self.initial_query    = SelfAssessmentResponse.objects.filter(Q(result_entry=self.instance))
         self.confirm_adhd     = False
-
-    def find_program_duration(self, tenscore):
-        match tenscore:
-            case _ if tenscore >= 0 and tenscore <= 4:
-                return 3
-            case _ if tenscore >= 5 and tenscore <= 6:
-                return 2 
-            case _ if tenscore >= 7 and tenscore <= 8:
-                return 1
-            case _ if tenscore >= 9:
-                return 0
-            case _:
-                return 3
 
     def find_result_label(self, tenscore):
         match tenscore:
@@ -43,7 +29,7 @@ class ResultService:
         return response_value
 
     def calculate_selfassessment(self):
-        responses = (
+        responses = list(
             self.initial_query
             .select_related('question')
             .filter(question__is_for_adults=self.is_adult)
@@ -66,9 +52,8 @@ class ResultService:
                 case 'AL':
                     audio_listening_total += scored_response
 
-        tenscore = round((raw_total / 84) * 10)
-
-        program_duration =  self.find_program_duration(tenscore)
+        max_score = len(responses) * 4
+        tenscore = round((raw_total / max_score) * 10) if max_score else 0
 
         instance = SelfAssessmentResult.objects.filter(id=self.instance.id).first()
         instance.result                   = self.find_result_label(tenscore)
@@ -77,16 +62,7 @@ class ResultService:
         instance.read_focus_total         = read_focus_total
         instance.visual_tracking_total    = visual_tracking_total
         instance.audio_listening_total    = audio_listening_total
-        instance.program_duration         = program_duration
         instance.save()
-
-        assessment_instance = UserAssessmentDetails.objects.filter(user=instance.user).first()
-        if assessment_instance is None:
-            assessment_instance  = UserAssessmentDetails()
-        
-        assessment_instance.user            = instance.user
-        assessment_instance.course_duration = program_duration * 30
-        assessment_instance.save()
 
         return  instance
 

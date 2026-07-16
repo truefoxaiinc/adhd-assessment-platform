@@ -6,6 +6,7 @@ from django.utils import timezone
 from datetime import timedelta
 from apps.users.models import Users
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse
+from services.assessment_result.assessment_result_services import ResultService
 from apps.filehandler.models import AdhdContent
 from apps.progresstracker.models import FaceAttentionSession, ProgressTracker, UserAssessmentDetails
 
@@ -137,6 +138,37 @@ class TestAssessmentViews:
         response = api_client.post(url, data, format='json')
         # It might require result_entry. We just assert it doesn't 500
         assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_400_BAD_REQUEST]
+
+    def test_self_assessment_score_uses_answered_question_max_score(self, user):
+        result = SelfAssessmentResult.objects.create(user=user)
+        rf_question = SelfAssessmentQuestions.objects.create(
+            question_text='RF Question',
+            category='RF',
+            is_for_adults=True,
+            is_active=True,
+        )
+        reverse_question = SelfAssessmentQuestions.objects.create(
+            question_text='Reverse Question',
+            category='N',
+            is_for_adults=True,
+            is_active=True,
+        )
+        SelfAssessmentResponse.objects.create(
+            result_entry=result,
+            question=rf_question,
+            response='4',
+        )
+        SelfAssessmentResponse.objects.create(
+            result_entry=result,
+            question=reverse_question,
+            response='0',
+        )
+
+        calculated = ResultService(result, is_adult=True).calculate_selfassessment()
+
+        assert calculated.raw_total == 8
+        assert calculated.tenscore == 10
+        assert calculated.result == 'Satisfactory to strong'
 
     def test_fetch_result(self, api_client, user):
         api_client.force_authenticate(user=user)

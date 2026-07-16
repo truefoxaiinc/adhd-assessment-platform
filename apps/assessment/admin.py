@@ -64,7 +64,6 @@ class SelfAssessmentResultAdmin(ModelAdmin):
         'read_focus_total',
         'visual_tracking_total',
         'audio_listening_total',
-        'program_duration',
     )
     list_filter = ('user',)
     search_fields = ('user__email', 'user__username', 'result')

@@ -150,7 +150,6 @@ class ResultFetchApiView(generics.GenericAPIView):
                     'read_focus_total',
                     'visual_tracking_total',
                     'audio_listening_total',
-                    'program_duration',
                 )
                 .filter(user=user_instance)
                 .filter(completed_at__isnull=False)

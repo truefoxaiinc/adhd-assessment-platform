@@ -28,7 +28,7 @@ class SelfAssessmentResultSchema(serializers.ModelSerializer):
 
     class Meta:
         model = SelfAssessmentResult
-        fields = ['id','user','result','raw_total','tenscore','read_focus_total','visual_tracking_total','audio_listening_total','program_duration','is_completed','created_at','completed_at']
+        fields = ['id','user','result','raw_total','tenscore','read_focus_total','visual_tracking_total','audio_listening_total','is_completed','created_at','completed_at']
 
     def get_is_completed(self, instance):
         return instance.completed_at is not None
