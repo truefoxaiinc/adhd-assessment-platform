@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.http import HttpResponseRedirect
 from django.utils.html import format_html
 
 from .models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse, ADHDDocument
@@ -69,6 +70,16 @@ class SelfAssessmentResultAdmin(ModelAdmin):
     search_fields = ('user__email', 'user__username', 'result')
     ordering = ('-id',)
     list_per_page = 25
+
+    def changelist_view(self, request, extra_context=None):
+        try:
+            return super().changelist_view(request, extra_context=extra_context)
+        except SelfAssessmentResult.DoesNotExist:
+            messages.warning(
+                request,
+                'Selected assessment score was already deleted. The list has been refreshed.',
+            )
+            return HttpResponseRedirect(request.path)
 
     @admin.display(description='Score band', ordering='tenscore')
     def score_status(self, obj):
