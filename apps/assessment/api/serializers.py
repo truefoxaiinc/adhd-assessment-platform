@@ -20,21 +20,43 @@ import math
 """Self Assessment Serializers"""
 
 class SelfAssessmentSubSerializer(serializers.ModelSerializer):
-    question        = serializers.IntegerField(allow_null=True, required=False)
-    response        = serializers.ChoiceField(choices=SelfAssessmentResponse.RESPONSE_CHOICES.choices,allow_null=True, required=False)
+    question        = serializers.IntegerField(allow_null=False, required=True)
+    response        = serializers.ChoiceField(choices=SelfAssessmentResponse.RESPONSE_CHOICES.choices,allow_null=False, required=False)
+    answer          = serializers.ChoiceField(choices=SelfAssessmentResponse.RESPONSE_CHOICES.choices,allow_null=False, required=False, write_only=True)
     text_response   = serializers.CharField(allow_null=True, required=False)
 
     class Meta:
         model = SelfAssessmentResponse
-        fields = ['id','question','response','text_response']
+        fields = ['id','question','response','answer','text_response']
 
     def validate(self,attrs):
-        return super().validate(attrs)
+        answer = attrs.pop('answer', None)
+        if attrs.get('response') in (None, '') and answer not in (None, ''):
+            attrs['response'] = answer
+
+        if attrs.get('response') in (None, ''):
+            raise ValidationError({'response': 'This field is required.'})
+
+        question_instance = get_object_or_none(SelfAssessmentQuestions,pk=attrs.get('question'))
+        if question_instance is None:
+            raise ValidationError({'question': 'Invalid question id.'})
+        if not question_instance.is_active:
+            raise ValidationError({'question': 'Question is not active.'})
+
+        request = self.context.get('request') or getattr(self.root, 'context', {}).get('request')
+        user_instance = get_token_user_or_none(request) if request else None
+        if user_instance and question_instance.is_for_adults != bool(user_instance.adult):
+            raise ValidationError({'question': 'Question does not match current user age group.'})
+
+        attrs['_question_instance'] = question_instance
+        return attrs
     
     def create(self,validated_data):
         result_instance = self.context.get('result_instance',None)
 
-        question_instance = get_object_or_none(SelfAssessmentQuestions,pk=validated_data.get('question'))
+        question_instance = validated_data.pop('_question_instance', None)
+        if question_instance is None:
+            question_instance = get_object_or_none(SelfAssessmentQuestions,pk=validated_data.get('question'))
         if question_instance is None:
             raise ValidationError({'question': 'Invalid question id.'})
 
@@ -78,9 +100,8 @@ class SelfAssessmentResponseSerializer(serializers.ModelSerializer):
         instance = AssessmentService.get_or_create_result_for_user(user_instance)
 
         for results in assessment_results:
-            sub_serializer = SelfAssessmentSubSerializer(data=results,context={'request':request,'result_instance':instance})
-            sub_serializer.is_valid(raise_exception=True)
-            sub_serializer.save()
+            sub_serializer = SelfAssessmentSubSerializer(context={'request':request,'result_instance':instance})
+            sub_serializer.create(results)
 
         is_adult = bool(user_instance.adult)
 

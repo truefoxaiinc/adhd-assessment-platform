@@ -139,6 +139,45 @@ class TestAssessmentViews:
         # It might require result_entry. We just assert it doesn't 500
         assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_400_BAD_REQUEST]
 
+    def test_save_response_accepts_answer_alias_and_scores_value(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        question = SelfAssessmentQuestions.objects.create(
+            question_text='Adult Question',
+            category='RF',
+            is_for_adults=True,
+            is_active=True,
+        )
+
+        response = api_client.post(
+            '/api/assessment/v1/self-assessment/save-response',
+            {'assesment': [{'question': question.id, 'answer': '3'}]},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['status'] is True
+        assert response.data['data']['raw_total'] == 3
+        assert response.data['data']['read_focus_total'] == 3
+        assert response.data['data']['tenscore'] == 8
+
+    def test_save_response_rejects_missing_answer_value(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        question = SelfAssessmentQuestions.objects.create(
+            question_text='Adult Question',
+            category='RF',
+            is_for_adults=True,
+            is_active=True,
+        )
+
+        response = api_client.post(
+            '/api/assessment/v1/self-assessment/save-response',
+            {'assesment': [{'question': question.id}]},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['status'] is False
+
     def test_self_assessment_score_uses_answered_question_max_score(self, user):
         result = SelfAssessmentResult.objects.create(user=user)
         rf_question = SelfAssessmentQuestions.objects.create(
