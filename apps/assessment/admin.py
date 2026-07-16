@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 from django.contrib import admin, messages
-from django.http import HttpResponseRedirect
 from django.utils.html import format_html
 
 from .models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse, ADHDDocument
@@ -70,16 +69,27 @@ class SelfAssessmentResultAdmin(ModelAdmin):
     search_fields = ('user__email', 'user__username', 'result')
     ordering = ('-id',)
     list_per_page = 25
+    actions = ['delete_selected_scores']
 
-    def changelist_view(self, request, extra_context=None):
-        try:
-            return super().changelist_view(request, extra_context=extra_context)
-        except SelfAssessmentResult.DoesNotExist:
-            messages.warning(
-                request,
-                'Selected assessment score was already deleted. The list has been refreshed.',
-            )
-            return HttpResponseRedirect(request.path)
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop('delete_selected', None)
+        return actions
+
+    @admin.action(description='Delete selected assessment scores')
+    def delete_selected_scores(self, request, queryset):
+        result_ids = list(queryset.values_list('id', flat=True))
+        if not result_ids:
+            self.message_user(request, 'No assessment scores selected.', level=messages.WARNING)
+            return
+
+        SelfAssessmentResponse.objects.filter(result_entry_id__in=result_ids).delete()
+        deleted_count, _ = SelfAssessmentResult.objects.filter(id__in=result_ids).delete()
+        self.message_user(
+            request,
+            f'Deleted {deleted_count} assessment score(s).',
+            level=messages.SUCCESS,
+        )
 
     @admin.display(description='Score band', ordering='tenscore')
     def score_status(self, obj):
