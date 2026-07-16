@@ -236,6 +236,62 @@ class TestAssessmentViews:
         assert response.data['data']['pending_questions'] == 1
         assert response.data['data']['completed_percentage'] == 50.0
 
+    def test_progress_ignores_completed_attempt_for_next_questionnaire(self, api_client, user):
+        cache.clear()
+        api_client.force_authenticate(user=user)
+        question = SelfAssessmentQuestions.objects.create(
+            question_text="Completed Attempt Question",
+            is_for_adults=True,
+            is_active=True,
+        )
+        completed_result = SelfAssessmentResult.objects.create(
+            user=user,
+            completed_at=timezone.now(),
+        )
+        SelfAssessmentResponse.objects.create(
+            result_entry=completed_result,
+            question=question,
+            response='4',
+        )
+
+        response = api_client.get('/api/assessment/v1/self-assessment/progress')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+        assert response.data['data']['result_id'] is None
+        assert response.data['data']['answered_questions'] == 0
+        assert response.data['data']['pending_questions'] == 1
+        assert response.data['data']['questions'][0]['is_answered'] is False
+
+    def test_save_response_after_completed_attempt_starts_new_attempt(self, api_client, user):
+        cache.clear()
+        api_client.force_authenticate(user=user)
+        question = SelfAssessmentQuestions.objects.create(
+            question_text="Retake Question",
+            is_for_adults=True,
+            is_active=True,
+        )
+        completed_result = SelfAssessmentResult.objects.create(
+            user=user,
+            completed_at=timezone.now(),
+        )
+        SelfAssessmentResponse.objects.create(
+            result_entry=completed_result,
+            question=question,
+            response='1',
+        )
+
+        response = api_client.post(
+            '/api/assessment/v1/self-assessment/save-response',
+            {'assesment': [{'question': question.id, 'response': '3'}]},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['status'] is True
+        assert response.data['data']['id'] != completed_result.id
+        assert SelfAssessmentResult.objects.filter(user=user).count() == 2
+
     def test_ai_score_history_filters_assessment_sessions(self, api_client, user):
         other_user = Users.objects.create_user(
             username='other_ai_user',

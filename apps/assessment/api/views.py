@@ -30,6 +30,7 @@ from .serializers import (
     SelfAssessmentResponseSerializer
 )
 from apps.assessment.cache import (
+    bump_user_result_cache,
     cache_get,
     cache_set,
     get_management_week_details_cache_key,
@@ -97,7 +98,6 @@ class SelfAssessmentResponseApiView(generics.GenericAPIView):
 
             instance = serializer.save()
 
-            from apps.assessment.cache import bump_user_result_cache
             bump_user_result_cache(instance.user_id)
 
             data = SelfAssessmentResultSchema(instance, context={'request': request}).data
@@ -148,10 +148,13 @@ class ResultFetchApiView(generics.GenericAPIView):
                 .first()
             )
             if latest_result and latest_result.completed_at is None:
+                was_incomplete = latest_result.completed_at is None
                 latest_result = AssessmentService.calculate_result(
                     latest_result,
                     is_for_adults,
                 )
+                if was_incomplete and latest_result.completed_at is not None:
+                    bump_user_result_cache(user_instance.id)
 
             instance = (
                 SelfAssessmentResult.objects
@@ -712,7 +715,7 @@ class SelfAssessmentProgressApiView(generics.GenericAPIView):
 
             latest_result = (
                 SelfAssessmentResult.objects
-                .filter(user=user_instance)
+                .filter(user=user_instance, completed_at__isnull=True)
                 .only('id', 'user_id')
                 .order_by('-id')
                 .first()
