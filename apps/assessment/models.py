@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.exceptions import ObjectDoesNotExist
 from django.utils.translation import gettext_lazy as _
 from apps.users.models import Users
 from helpers.abstract_models import AbstractDateFieldMix
@@ -44,7 +45,11 @@ class SelfAssessmentResult(models.Model):
     completed_at            = models.DateTimeField(_('Completed At'), null=True, blank=True)
 
     def __str__(self):
-        return f"Response by {self.user.username} for {self.result}"
+        try:
+            username = self.user.username or 'unknown user'
+        except ObjectDoesNotExist:
+            username = 'missing user'
+        return f"Response by {username} for {self.result or 'pending result'}"
 
     class Meta:
         verbose_name          = _("SelfAssessmentResult")
@@ -72,7 +77,17 @@ class SelfAssessmentResponse(models.Model):
     text_response   = models.TextField(_('Text Response'),null=True, blank=True)
 
     def __str__(self):
-        return f"Response by {self.result_entry.user.username} for {self.question.question_text}"
+        try:
+            username = self.result_entry.user.username or 'unknown user'
+        except ObjectDoesNotExist:
+            username = 'missing result'
+
+        try:
+            question_text = self.question.question_text or 'unknown question'
+        except ObjectDoesNotExist:
+            question_text = 'missing question'
+
+        return f"Response by {username} for {question_text}"
 
     class Meta:
         verbose_name          = _("SelfAssessmentResponse")
