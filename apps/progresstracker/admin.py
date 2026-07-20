@@ -47,14 +47,18 @@ class FaceAttentionSessionAdmin(ModelAdmin):
         'user',
         'file',
         'session_id',
+        'content_type',
+        'final_score',
         'concentration_score',
+        'attention_engagement_rate',
+        'reading_engagement_rate',
         'focus_status',
         'gaze_ratio_avg',
         'inattention_duration',
         'drowsy_state',
         'created_at',
     )
-    list_filter = ('user', 'file', 'created_at')
+    list_filter = ('user', 'file', 'content_type', 'is_assessment', 'created_at')
     search_fields = ('user__email', 'user__username', 'session_id', 'file__title')
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
