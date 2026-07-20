@@ -143,7 +143,7 @@ class FrontendAttentionScoreSerializer(serializers.Serializer):
     session_duration_seconds = FiniteFloatField(required=True, min_value=0)
     inattention_duration = FiniteFloatField(required=True, min_value=0)
     maximum_inattention_duration = FiniteFloatField(required=False, min_value=0, default=0)
-    gaze_ratio_avg = FiniteFloatField(required=True, min_value=0, max_value=1)
+    gaze_ratio_avg = FiniteFloatField(required=True, min_value=0)
     gaze_quality_avg = FiniteFloatField(required=False, min_value=0, max_value=1, default=0)
     reading_gaze_frequency_avg_hz = FiniteFloatField(required=False, min_value=0, default=0)
     reading_gaze_amplitude_avg = FiniteFloatField(required=False, min_value=0, default=0)

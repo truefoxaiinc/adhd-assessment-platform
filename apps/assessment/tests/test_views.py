@@ -70,7 +70,7 @@ class TestAssessmentViews:
             'sampled_frames': 120,
             'session_duration_seconds': 300,
             'inattention_duration': 20,
-            'gaze_ratio_avg': 0,
+            'gaze_ratio_avg': 1.5,
             'drowsy_state': 0,
             'brightness_score': 0,
             'pitch': 0,
