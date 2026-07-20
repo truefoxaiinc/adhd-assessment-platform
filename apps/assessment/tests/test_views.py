@@ -563,6 +563,13 @@ class TestAssessmentViews:
         assert selected_day['sessions'][0]['content_type'] == 'pdf'
         assert selected_day['sessions'][0]['content_label'] == 'PDF'
         assert selected_day['sessions'][0]['score'] == 82
+        assert selected_day['sessions'][0]['final_score'] == 82
+        assert selected_day['sessions'][0]['file'] == pdf_content.id
+        assert selected_day['sessions'][0]['file_id'] == pdf_content.id
+        assert selected_day['sessions'][0]['is_assessment'] is False
+        assert selected_day['sessions'][0]['total_processed_frames'] == 100
+        assert selected_day['sessions'][0]['sampled_frames'] == 100
+        assert selected_day['sessions'][0]['session_duration_seconds'] == 720
         assert selected_day['sessions'][0]['duration_label'] == '12m'
         assert selected_day['sessions'][1]['file_title'] == 'Focus Training'
         assert selected_day['sessions'][1]['content_label'] == 'VIDEO'
