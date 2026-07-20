@@ -87,10 +87,23 @@ class TestAssessmentViews:
         payload.update(overrides)
         return payload
 
-    def create_management_session(self, user, *, days_ago, score, attention=80, duration=3600):
+    def create_management_session(
+        self,
+        user,
+        *,
+        days_ago,
+        score,
+        attention=80,
+        duration=3600,
+        content=None,
+        content_type='video',
+    ):
         session = FaceAttentionSession.objects.create(
             user=user,
+            file=content,
+            content_type=content_type,
             is_assessment=False,
+            final_score=score,
             concentration_score=round((score / 100) * 8, 2),
             average_concentration_score=round((score / 100) * 8, 2),
             attention_engagement_rate=attention,
@@ -488,15 +501,72 @@ class TestAssessmentViews:
             'days',
             'selected_day',
         }
-        assert first_page_week['selected_day']['total_score'] == 71.0
+        assert first_page_week['selected_day']['sessions'][0]['score'] == 71.0
 
         response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL, {'page': 2, 'limit': 2})
 
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data['data']['results']) == 1
         latest_week = response.data['data']['results'][0]
-        assert latest_week['selected_day']['total_score'] == 85.0
-        assert latest_week['selected_day']['duration_label'] == '1h 25m'
+        assert latest_week['selected_day']['sessions'][0]['score'] == 85.0
+        assert latest_week['selected_day']['sessions'][0]['duration_label'] == '1h 25m'
+
+    def test_management_latest_week_returns_selected_day_sessions(self, api_client, user):
+        cache.clear()
+        pdf_content = AdhdContent.objects.create(
+            title='Reading Focus',
+            file='adhd_content/reading-focus.pdf',
+            is_management=True,
+            age_group='adult',
+            file_type='document',
+            day=1,
+            order_number=1,
+        )
+        video_content = AdhdContent.objects.create(
+            title='Focus Training',
+            file='adhd_content/focus-training.mp4',
+            is_management=True,
+            age_group='adult',
+            file_type='video',
+            day=1,
+            order_number=2,
+        )
+        self.create_management_session(
+            user,
+            days_ago=0,
+            score=82,
+            duration=720,
+            content=pdf_content,
+            content_type='pdf',
+        )
+        self.create_management_session(
+            user,
+            days_ago=0,
+            score=86,
+            duration=900,
+            content=video_content,
+            content_type='video',
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        selected_day = response.data['data']['results'][0]['selected_day']
+        assert selected_day['sessions_count'] == 2
+        assert 'total_score' not in selected_day
+        assert 'concentration_score' not in selected_day
+        assert 'attention_score' not in selected_day
+        assert 'duration_seconds' not in selected_day
+        assert 'duration_label' not in selected_day
+        assert selected_day['sessions'][0]['file_title'] == 'Reading Focus'
+        assert selected_day['sessions'][0]['content_type'] == 'pdf'
+        assert selected_day['sessions'][0]['content_label'] == 'PDF'
+        assert selected_day['sessions'][0]['score'] == 82
+        assert selected_day['sessions'][0]['duration_label'] == '12m'
+        assert selected_day['sessions'][1]['file_title'] == 'Focus Training'
+        assert selected_day['sessions'][1]['content_label'] == 'VIDEO'
+        assert selected_day['sessions'][1]['score'] == 86
 
     def test_management_latest_week_empty_state(self, api_client, user):
         cache.clear()

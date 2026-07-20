@@ -10,7 +10,7 @@ from helpers.custom_messages import _success
 import  os,sys
 import logging
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 from math import ceil
 
 logger = logging.getLogger(__name__)
@@ -414,6 +414,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
         return list(
             FaceAttentionSession.objects
             .filter(user=user, is_assessment=False)
+            .select_related('file')
             .order_by('created_at', 'id')
         )
 
@@ -457,7 +458,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
         }
 
     @classmethod
-    def _build_all_week_details(cls, sessions):
+    def _build_all_week_details(cls, sessions, selected_date=None):
         week_buckets = defaultdict(list)
         day_buckets = defaultdict(list)
 
@@ -472,9 +473,20 @@ class ManagementDashboardApiView(generics.GenericAPIView):
                 week_start,
                 day_buckets,
                 selected_week_number=index + 1,
+                selected_date=selected_date,
             )
             for index, week_start in enumerate(sorted(week_buckets.keys()))
         ]
+
+    @staticmethod
+    def _get_selected_date(request):
+        selected_date = request.query_params.get('selected_date') or request.query_params.get('date')
+        if not selected_date:
+            return None
+        try:
+            return datetime.strptime(selected_date, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            raise ValidationError({'selected_date': 'Use date format YYYY-MM-DD.'})
 
     @staticmethod
     def _get_pagination_params(request):
@@ -537,7 +549,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
         }
 
     @classmethod
-    def _serialize_week_details(cls, week_start, day_buckets, selected_week_number):
+    def _serialize_week_details(cls, week_start, day_buckets, selected_week_number, selected_date=None):
         days = []
         for day_offset in range(7):
             day = week_start + timedelta(days=day_offset)
@@ -545,7 +557,11 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             day_summary = cls._serialize_day(day, sessions)
             days.append(day_summary)
 
-        selected_day = next((day for day in days if day["has_data"]), None)
+        selected_day = None
+        if selected_date and week_start <= selected_date <= week_start + timedelta(days=6):
+            selected_day = next((day for day in days if day["date"] == selected_date.isoformat()), None)
+        if selected_day is None:
+            selected_day = next((day for day in days if day["has_data"]), None)
         if selected_day is None:
             selected_day = days[0] if days else None
 
@@ -560,12 +576,6 @@ class ManagementDashboardApiView(generics.GenericAPIView):
     @classmethod
     def _serialize_day(cls, day, sessions):
         scores = [cls._session_score(session) for session in sessions]
-        concentration_scores = [
-            round((session.concentration_score / 8.0) * 100, 2)
-            for session in sessions
-        ]
-        attention_scores = [session.attention_engagement_rate for session in sessions]
-        duration_seconds = sum(session.session_duration_seconds for session in sessions)
         total_score = cls._average(scores)
 
         return {
@@ -574,12 +584,36 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             "day_number": day.day,
             "has_data": bool(sessions),
             "status_label": cls._day_status(total_score) if sessions else "",
-            "total_score": total_score,
-            "concentration_score": cls._average(concentration_scores),
-            "attention_score": cls._average(attention_scores),
-            "duration_seconds": round(duration_seconds, 2),
-            "duration_label": cls._format_duration(duration_seconds),
             "sessions_count": len(sessions),
+            "sessions": [
+                cls._serialize_session(session)
+                for session in sorted(sessions, key=lambda item: (item.created_at, item.id))
+            ],
+        }
+
+    @classmethod
+    def _serialize_session(cls, session):
+        local_created_at = timezone.localtime(session.created_at)
+        content = session.file
+        content_type = session.content_type or (content.file_type if content else "")
+        score = session.final_score or cls._session_score(session)
+
+        return {
+            "id": session.id,
+            "session_id": session.session_id,
+            "file_id": content.id if content else None,
+            "file_title": content.title if content else "",
+            "content_type": content_type,
+            "content_label": content_type.upper() if content_type else "",
+            "score": round(score, 2),
+            "final_score": round(session.final_score, 2),
+            "started_at": local_created_at.isoformat(),
+            "time_label": local_created_at.strftime("%I:%M %p").lstrip("0"),
+            "duration_seconds": round(session.session_duration_seconds, 2),
+            "duration_label": cls._format_duration(session.session_duration_seconds),
+            "attention_engagement_rate": round(session.attention_engagement_rate, 2),
+            "reading_engagement_rate": round(session.reading_engagement_rate, 2),
+            "calculation_version": session.calculation_version,
         }
 
     @staticmethod
@@ -652,13 +686,17 @@ class ManagementLatestWeekApiView(generics.GenericAPIView):
     def get(self, request):
         try:
             page, limit = ManagementDashboardApiView._get_pagination_params(request)
+            selected_date = ManagementDashboardApiView._get_selected_date(request)
             cache_key = get_management_week_details_cache_key(request.user.id, request)
             cached_response = cache_get(cache_key)
             if cached_response:
                 return Response(cached_response, status=status.HTTP_200_OK)
 
             sessions = ManagementDashboardApiView._get_user_management_sessions(request.user)
-            week_details = ManagementDashboardApiView._build_all_week_details(sessions)
+            week_details = ManagementDashboardApiView._build_all_week_details(
+                sessions,
+                selected_date=selected_date,
+            )
             paginated_week_details = ManagementDashboardApiView._paginate_week_details(
                 request,
                 week_details,
