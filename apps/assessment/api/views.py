@@ -6,6 +6,7 @@ from helpers.exceptions.exceptions import safe_exception_response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from rest_framework import serializers
 from helpers.custom_messages import _success
 import  os,sys
 import logging
@@ -363,6 +364,7 @@ class FrontendAttentionScoreSaveApiView(generics.GenericAPIView):
 
 
 class ManagementDashboardApiView(generics.GenericAPIView):
+    serializer_class = serializers.Serializer
     permission_classes = (IsAuthenticated,)
     filter_backends = []
 
@@ -704,6 +706,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
 
 
 class ManagementLatestWeekApiView(generics.GenericAPIView):
+    serializer_class = serializers.Serializer
     permission_classes = (IsAuthenticated,)
     filter_backends = []
 
