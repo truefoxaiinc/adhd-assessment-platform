@@ -1,4 +1,6 @@
 from django.utils import timezone
+from django.db import transaction
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.users.models import PasswordResetOTP, Users
@@ -18,7 +20,18 @@ class PasswordResetService:
             raise serializers.ValidationError({"email": "No user found with this email address"})
 
         _, otp = PasswordResetOTP.create_for_user(user)
-        send_otp_email_task.delay(email, otp)
+        transaction.on_commit(lambda: PasswordResetService.send_reset_otp(email, otp))
+
+    @staticmethod
+    def send_reset_otp(email, otp):
+        if not settings.PASSWORD_RESET_EMAIL_ASYNC:
+            send_otp_email_task(email, otp)
+            return
+
+        try:
+            send_otp_email_task.delay(email, otp)
+        except Exception:
+            send_otp_email_task(email, otp)
 
     @staticmethod
     def verify_otp(email, otp):

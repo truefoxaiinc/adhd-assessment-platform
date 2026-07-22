@@ -482,6 +482,7 @@ EMAIL_HOST_PASSWORD   = get_secret_config('EMAIL_HOST_PASSWORD', default='srhf v
 EMAIL_PORT            = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS         = True
 DEFAULT_FROM_EMAIL    = config('DEFAULT_FROM_EMAIL', default='truefoxaiinc.official@gmail.com')
+PASSWORD_RESET_EMAIL_ASYNC = config('PASSWORD_RESET_EMAIL_ASYNC', default=False, cast=bool)
 
 STRIPE_SECRET_KEY = get_secret_config('STRIPE_SECRET_KEY', default='')
 STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='')
