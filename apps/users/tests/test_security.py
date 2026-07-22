@@ -134,11 +134,11 @@ class TestPasswordResetSecurity:
         assert reset.reset_token_hash is None
 
     def test_otp_verification_returns_one_time_reset_token(self, api_client, user):
-        with patch('apps.users.tasks.send_mail') as mocked_send_mail:
+        with patch('apps.users.tasks.EmailMultiAlternatives') as mocked_email:
             response = api_client.post(self.request_url, {'email': user.email}, format='json')
 
         assert response.status_code == status.HTTP_201_CREATED
-        otp = mocked_send_mail.call_args.args[1].split(': ')[1].split('.')[0]
+        otp = mocked_email.call_args.args[1].split('code is: ')[1].split('\n')[0]
 
         verify_response = api_client.post(
             self.verify_url,
@@ -159,26 +159,28 @@ class TestPasswordResetSecurity:
 @pytest.mark.django_db
 class TestPasswordResetService:
     def test_request_reset_creates_hashed_otp_and_sends_email(self, user):
-        with patch('apps.users.tasks.send_mail') as mocked_send_mail:
+        with patch('apps.users.tasks.EmailMultiAlternatives') as mocked_email:
             PasswordResetService.request_reset(user.email)
 
         reset = PasswordResetOTP.objects.get(user=user)
         assert reset.otp is None
         assert reset.otp_hash
-        mocked_send_mail.assert_called_once()
-        assert mocked_send_mail.call_args.args[3] == [user.email]
+        mocked_email.assert_called_once()
+        assert mocked_email.call_args.args[3] == [user.email]
+        mocked_email.return_value.attach_alternative.assert_called_once()
+        mocked_email.return_value.send.assert_called_once_with(fail_silently=False)
 
     @override_settings(PASSWORD_RESET_EMAIL_ASYNC=True)
     def test_request_reset_falls_back_to_direct_email_when_queue_fails(self, user):
         with patch(
             'apps.users.services.password_reset_service.send_otp_email_task.delay',
             side_effect=Exception('broker unavailable'),
-        ) as mocked_delay, patch('apps.users.tasks.send_mail') as mocked_send_mail:
+        ) as mocked_delay, patch('apps.users.tasks.EmailMultiAlternatives') as mocked_email:
             PasswordResetService.request_reset(user.email)
 
         mocked_delay.assert_called_once()
-        mocked_send_mail.assert_called_once()
-        assert mocked_send_mail.call_args.args[3] == [user.email]
+        mocked_email.assert_called_once()
+        assert mocked_email.call_args.args[3] == [user.email]
 
     def test_verify_otp_issues_reset_token(self, user):
         reset, otp = PasswordResetOTP.create_for_user(user, otp='123456')
