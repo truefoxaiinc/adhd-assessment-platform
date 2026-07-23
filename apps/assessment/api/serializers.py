@@ -4,6 +4,7 @@ from apps.assessment.services.assessment_service import AssessmentService
 from apps.filehandler.models import AdhdContent
 from apps.progresstracker.models import (
     FaceAttentionSession,
+    ManagementActivitySession,
     generate_attention_session_id,
 )
 from apps.progresstracker.services.track_services import ProgressTrackerActions
@@ -257,4 +258,135 @@ class FrontendAttentionScoreSerializer(serializers.Serializer):
             if not instance.is_assessment:
                 bump_user_management_cache(user.id)
 
+        return instance
+
+
+class ManagementActivityScoreSerializer(serializers.ModelSerializer):
+    content_type = serializers.CharField(required=False, max_length=50)
+    activity_code = serializers.ChoiceField(choices=[
+        'memory_flip',
+        'target_pop',
+        'focus_hunt',
+        'sequence_recall',
+        'colour_conflict',
+        'task_switch',
+    ])
+    management_day = serializers.IntegerField(required=True, min_value=1)
+    is_assessment = serializers.BooleanField(required=True)
+    status = serializers.ChoiceField(choices=['started', 'completed', 'abandoned'])
+    level = serializers.IntegerField(required=True, min_value=1)
+    difficulty = serializers.ChoiceField(choices=['easy', 'medium', 'hard', 'expert'])
+    session_duration_seconds = FiniteFloatField(required=True, min_value=0)
+    target_count = serializers.IntegerField(required=True, min_value=0)
+    completed_count = serializers.IntegerField(required=True, min_value=0)
+    correct_count = serializers.IntegerField(required=True, min_value=0)
+    incorrect_count = serializers.IntegerField(required=True, min_value=0)
+    missed_count = serializers.IntegerField(required=True, min_value=0)
+    assisted_count = serializers.IntegerField(required=True, min_value=0)
+    action_count = serializers.IntegerField(required=True, min_value=0)
+    average_response_time_ms = FiniteFloatField(required=True, min_value=0)
+    accuracy_rate = FiniteFloatField(required=True, min_value=0, max_value=100)
+    completion_rate = FiniteFloatField(required=True, min_value=0, max_value=100)
+    response_control_score = FiniteFloatField(required=True, min_value=0, max_value=100)
+    speed_score = FiniteFloatField(required=True, min_value=0, max_value=100)
+    attention_score = FiniteFloatField(required=True, min_value=0, max_value=100)
+    performance_score = FiniteFloatField(required=True, min_value=0, max_value=100)
+    final_score = FiniteFloatField(required=True, min_value=0, max_value=100)
+
+    class Meta:
+        model = ManagementActivitySession
+        fields = [
+            'id',
+            'content_type',
+            'activity_code',
+            'management_day',
+            'is_assessment',
+            'status',
+            'level',
+            'difficulty',
+            'started_at',
+            'completed_at',
+            'session_duration_seconds',
+            'target_count',
+            'completed_count',
+            'correct_count',
+            'incorrect_count',
+            'missed_count',
+            'assisted_count',
+            'action_count',
+            'average_response_time_ms',
+            'accuracy_rate',
+            'completion_rate',
+            'response_control_score',
+            'speed_score',
+            'attention_score',
+            'performance_score',
+            'final_score',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def validate(self, attrs):
+        unknown_fields = set(self.initial_data.keys()) - set(self.fields.keys())
+        if unknown_fields:
+            raise ValidationError({
+                field: 'Unknown field.' for field in sorted(unknown_fields)
+            })
+
+        attrs['content_type'] = attrs.get('content_type') or 'activity'
+        if attrs['content_type'] != 'activity':
+            raise ValidationError({'content_type': 'Use activity.'})
+        if attrs['is_assessment']:
+            raise ValidationError({'is_assessment': 'Management activity score must use false.'})
+        if attrs['completed_count'] > attrs['target_count']:
+            raise ValidationError({'completed_count': 'Cannot exceed target_count.'})
+        counted_outcomes = attrs['correct_count'] + attrs['incorrect_count'] + attrs['missed_count']
+        if counted_outcomes > attrs['target_count']:
+            raise ValidationError({
+                'correct_count': 'Correct, incorrect, and missed total cannot exceed target_count.'
+            })
+        if attrs.get('completed_at') and attrs['completed_at'] < attrs['started_at']:
+            raise ValidationError({'completed_at': 'Cannot be before started_at.'})
+
+        user = self.context['request'].user
+        age_group = user.age_category or 'adult'
+        content = (
+            AdhdContent.objects
+            .filter(
+                is_management=True,
+                age_group=age_group,
+                day=attrs['management_day'],
+                file_type='activity',
+                activity_name=attrs['activity_code'],
+            )
+            .order_by('order_number', 'id')
+            .first()
+        )
+        if content:
+            unlocked_days = ProgressTrackerActions.get_days_for_the_file(user) or [1]
+            if content.day not in unlocked_days:
+                raise ValidationError({'management_day': 'Activity is locked for this user.'})
+            attrs['content'] = content
+
+        return attrs
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        content = validated_data.get('content')
+        instance = ManagementActivitySession.objects.create(
+            user=user,
+            **validated_data,
+        )
+
+        if content and instance.status == 'completed':
+            progress_updated = ProgressTrackerActions.update_learning_progress(
+                user,
+                content.file_type,
+                content.day,
+                content.order_number,
+            )
+            if not progress_updated:
+                raise ValidationError({
+                    'activity_code': 'Unable to update learning progress for this activity.'
+                })
         return instance

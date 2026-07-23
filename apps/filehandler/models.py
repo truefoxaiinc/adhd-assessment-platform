@@ -24,14 +24,25 @@ class FileTypeCategory(models.TextChoices):
     VIDEO = 'video', _('Video')
     DOCUMENT = 'document', _('Document')
     FILE = 'file', _('File')
+    ACTIVITY = 'activity', _('Activity')
+
+
+class ActivityNameCategory(models.TextChoices):
+    MEMORY_FLIP = 'memory_flip', _('Memory Flip')
+    TARGET_POP = 'target_pop', _('Target Pop')
+    FOCUS_HUNT = 'focus_hunt', _('Focus Hunt')
+    SEQUENCE_RECALL = 'sequence_recall', _('Sequence Recall')
+    COLOUR_CONFLICT = 'colour_conflict', _('Colour Conflict')
+    TASK_SWITCH = 'task_switch', _('Task Switch')
 
 class AdhdContent(models.Model):
     title            = models.CharField(_('Title'), max_length=255)
-    file             = models.FileField(_('File'), upload_to='adhd_content/')
+    file             = models.FileField(_('File'), upload_to='adhd_content/', blank=True, null=True)
     is_management    = models.BooleanField(_('Is Management'), default=False, help_text="True for Management files, False for Assessment files")
     age_group        = models.CharField(_('Age Group'), max_length=50, choices=AgeGroupCategory.choices, default=AgeGroupCategory.ADULT)
     day              = models.IntegerField(_('Day'), blank=True, null=True, help_text="Required for management files. e.g. 1 for day-1")
     file_type        = models.CharField(_('File Type'), max_length=50, choices=FileTypeCategory.choices, default=FileTypeCategory.VIDEO)
+    activity_name    = models.CharField(_('Activity Name'), max_length=50, choices=ActivityNameCategory.choices, blank=True, null=True)
     order_number     = models.IntegerField(_('Order Number'), default=1)
     created_at       = models.DateTimeField(_('Created At'), auto_now_add=True)
 

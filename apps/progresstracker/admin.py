@@ -3,7 +3,13 @@ from django.contrib import admin
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 
-from .models import UserAssessmentDetails, ProgressTracker, FaceAttentionSession, UserGoal
+from .models import (
+    FaceAttentionSession,
+    ManagementActivitySession,
+    ProgressTracker,
+    UserAssessmentDetails,
+    UserGoal,
+)
 
 
 @admin.register(UserAssessmentDetails)
@@ -87,3 +93,23 @@ class UserGoalAdmin(ModelAdmin):
         if len(obj.goal) <= 60:
             return obj.goal
         return f'{obj.goal[:57]}...'
+
+
+@admin.register(ManagementActivitySession)
+class ManagementActivitySessionAdmin(ModelAdmin):
+    list_display = (
+        'id',
+        'user',
+        'activity_code',
+        'management_day',
+        'status',
+        'difficulty',
+        'final_score',
+        'started_at',
+        'completed_at',
+    )
+    list_filter = ('activity_code', 'management_day', 'status', 'difficulty', 'created_at')
+    search_fields = ('user__email', 'user__username', 'activity_code')
+    date_hierarchy = 'created_at'
+    ordering = ('-created_at',)
+    list_per_page = 25

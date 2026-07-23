@@ -1,6 +1,6 @@
 # serializers.py
 from rest_framework import serializers
-from .models import AdhdContent
+from .models import AdhdContent, FileTypeCategory
 from apps.progresstracker.services.track_services import ProgressTrackerActions
 
 class VideoUploadSerializer(serializers.Serializer):
@@ -27,6 +27,29 @@ class AdhdContentSerializer(serializers.ModelSerializer):
 
         return obj.day not in unlocked_days
 
+    def validate(self, attrs):
+        file_type = attrs.get("file_type", getattr(self.instance, "file_type", None))
+        activity_name = attrs.get("activity_name", getattr(self.instance, "activity_name", None))
+        uploaded_file = attrs.get("file", getattr(self.instance, "file", None))
+
+        if file_type == FileTypeCategory.ACTIVITY:
+            if not activity_name:
+                raise serializers.ValidationError({
+                    "activity_name": "This field is required for activity content."
+                })
+            return attrs
+
+        if not uploaded_file:
+            raise serializers.ValidationError({
+                "file": "This field is required for video/file content."
+            })
+        if activity_name:
+            raise serializers.ValidationError({
+                "activity_name": "Use this field only when file_type is activity."
+            })
+
+        return attrs
+
 
 class UpdateLearningProgressSerializer(serializers.Serializer):
     file_id = serializers.PrimaryKeyRelatedField(
@@ -34,7 +57,7 @@ class UpdateLearningProgressSerializer(serializers.Serializer):
         required=False,
         allow_null=False,
     )
-    filetype = serializers.ChoiceField(choices=["video", "file"], required=False)
+    filetype = serializers.ChoiceField(choices=["video", "file", "document", "activity"], required=False)
     day_completed = serializers.IntegerField(required=False, min_value=1)
     order_number = serializers.IntegerField(required=False, min_value=1)
 

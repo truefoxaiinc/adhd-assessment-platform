@@ -83,6 +83,8 @@ class UserAssessmentDetails(models.Model):
 class FILE_TYPE_CHOICES(models.TextChoices):
     VIDEO    = 'video', _('Video')
     FILE     = 'file', _('File')
+    DOCUMENT = 'document', _('Document')
+    ACTIVITY = 'activity', _('Activity')
 
 class ProgressTracker(models.Model):
     user                = models.ForeignKey(Users, on_delete=models.CASCADE)
@@ -95,6 +97,71 @@ class ProgressTracker(models.Model):
         verbose_name          = _("ProgressTracker")
         verbose_name_plural   = _("ProgressTracker")
         db_table              = 'ProgressTracker'
+
+
+class ACTIVITY_CODE_CHOICES(models.TextChoices):
+    MEMORY_FLIP = 'memory_flip', _('Memory Flip')
+    TARGET_POP = 'target_pop', _('Target Pop')
+    FOCUS_HUNT = 'focus_hunt', _('Focus Hunt')
+    SEQUENCE_RECALL = 'sequence_recall', _('Sequence Recall')
+    COLOUR_CONFLICT = 'colour_conflict', _('Colour Conflict')
+    TASK_SWITCH = 'task_switch', _('Task Switch')
+
+
+class ACTIVITY_STATUS_CHOICES(models.TextChoices):
+    STARTED = 'started', _('Started')
+    COMPLETED = 'completed', _('Completed')
+    ABANDONED = 'abandoned', _('Abandoned')
+
+
+class ACTIVITY_DIFFICULTY_CHOICES(models.TextChoices):
+    EASY = 'easy', _('Easy')
+    MEDIUM = 'medium', _('Medium')
+    HARD = 'hard', _('Hard')
+    EXPERT = 'expert', _('Expert')
+
+
+class ManagementActivitySession(models.Model):
+    user = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='management_activity_sessions')
+    content = models.ForeignKey(AdhdContent, on_delete=models.SET_NULL, related_name='activity_sessions', blank=True, null=True)
+    content_type = models.CharField(max_length=50, default='activity')
+    activity_code = models.CharField(max_length=50, choices=ACTIVITY_CODE_CHOICES.choices)
+    management_day = models.PositiveIntegerField()
+    is_assessment = models.BooleanField(default=False)
+    status = models.CharField(max_length=50, choices=ACTIVITY_STATUS_CHOICES.choices, default=ACTIVITY_STATUS_CHOICES.COMPLETED)
+    level = models.PositiveIntegerField(default=1)
+    difficulty = models.CharField(max_length=50, choices=ACTIVITY_DIFFICULTY_CHOICES.choices, default=ACTIVITY_DIFFICULTY_CHOICES.EASY)
+    started_at = models.DateTimeField()
+    completed_at = models.DateTimeField(blank=True, null=True)
+    session_duration_seconds = models.FloatField(default=0.0)
+    target_count = models.PositiveIntegerField(default=0)
+    completed_count = models.PositiveIntegerField(default=0)
+    correct_count = models.PositiveIntegerField(default=0)
+    incorrect_count = models.PositiveIntegerField(default=0)
+    missed_count = models.PositiveIntegerField(default=0)
+    assisted_count = models.PositiveIntegerField(default=0)
+    action_count = models.PositiveIntegerField(default=0)
+    average_response_time_ms = models.FloatField(default=0.0)
+    accuracy_rate = models.FloatField(default=0.0)
+    completion_rate = models.FloatField(default=0.0)
+    response_control_score = models.FloatField(default=0.0)
+    speed_score = models.FloatField(default=0.0)
+    attention_score = models.FloatField(default=0.0)
+    performance_score = models.FloatField(default=0.0)
+    final_score = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.activity_code} day {self.management_day}"
+
+    class Meta:
+        verbose_name = _("ManagementActivitySession")
+        verbose_name_plural = _("ManagementActivitySessions")
+        db_table = 'ManagementActivitySession'
+        indexes = [
+            models.Index(fields=['user', '-created_at'], name='activity_user_created_idx'),
+            models.Index(fields=['user', 'management_day', 'activity_code'], name='activity_user_day_code_idx'),
+        ]
 
 
 class UserGoal(models.Model):

@@ -8,7 +8,7 @@ from apps.users.models import Users
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse
 from services.assessment_result.assessment_result_services import ResultService
 from apps.filehandler.models import AdhdContent
-from apps.progresstracker.models import FaceAttentionSession, ProgressTracker, UserAssessmentDetails
+from apps.progresstracker.models import FaceAttentionSession, ManagementActivitySession, ProgressTracker, UserAssessmentDetails
 
 @pytest.fixture
 def api_client():
@@ -46,6 +46,7 @@ class TestAssessmentViews:
     AI_SCORE_SAVE_URL = '/api/assessment/v1/ai-assessment/save-score'
     MANAGEMENT_DASHBOARD_URL = '/api/assessment/v1/management/dashboard'
     MANAGEMENT_LATEST_WEEK_URL = '/api/assessment/v1/management/latest-week'
+    MANAGEMENT_ACTIVITY_SCORE_URL = '/api/assessment/v1/management/activity-score'
 
     def full_attention_payload(self, **overrides):
         content = overrides.pop('content', None)
@@ -115,6 +116,37 @@ class TestAssessmentViews:
         FaceAttentionSession.objects.filter(id=session.id).update(created_at=created_at)
         session.created_at = created_at
         return session
+
+    def full_activity_payload(self, **overrides):
+        payload = {
+            'content_type': 'activity',
+            'activity_code': 'task_switch',
+            'management_day': 4,
+            'is_assessment': False,
+            'status': 'completed',
+            'level': 4,
+            'difficulty': 'expert',
+            'started_at': '2026-07-23T10:12:20.000Z',
+            'completed_at': '2026-07-23T10:15:04.000Z',
+            'session_duration_seconds': 164,
+            'target_count': 24,
+            'completed_count': 24,
+            'correct_count': 20,
+            'incorrect_count': 3,
+            'missed_count': 1,
+            'assisted_count': 0,
+            'action_count': 24,
+            'average_response_time_ms': 1380,
+            'accuracy_rate': 83.33,
+            'completion_rate': 100.0,
+            'response_control_score': 80.0,
+            'speed_score': 78.0,
+            'attention_score': 82,
+            'performance_score': 84,
+            'final_score': 83,
+        }
+        payload.update(overrides)
+        return payload
 
     def test_get_questions_adult(self, api_client, user, questions):
         api_client.force_authenticate(user=user)
@@ -595,6 +627,125 @@ class TestAssessmentViews:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data['errors']['page'] == 'Use a number greater than or equal to 1.'
+
+    def test_save_management_activity_score(self, api_client, user):
+        AdhdContent.objects.create(
+            title='Task Switch',
+            is_management=True,
+            age_group='adult',
+            day=4,
+            file_type='activity',
+            activity_name='task_switch',
+            order_number=5,
+        )
+        UserAssessmentDetails.objects.create(
+            user=user,
+            last_completed=3,
+            last_completed_at=timezone.now() - timedelta(days=1),
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.MANAGEMENT_ACTIVITY_SCORE_URL,
+            self.full_activity_payload(),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['status'] is True
+        assert response.data['data']['activity_code'] == 'task_switch'
+        assert response.data['data']['final_score'] == 83.0
+        session = ManagementActivitySession.objects.get(user=user)
+        assert session.management_day == 4
+        assert session.content.activity_name == 'task_switch'
+        assert ProgressTracker.objects.filter(
+            user=user,
+            day_number=4,
+            file_type='activity',
+            order_number='5',
+        ).exists()
+
+    def test_management_latest_week_includes_activity_score_sessions(self, api_client, user):
+        cache.clear()
+        activity_content = AdhdContent.objects.create(
+            title='Task Switch',
+            is_management=True,
+            age_group='adult',
+            day=4,
+            file_type='activity',
+            activity_name='task_switch',
+            order_number=5,
+        )
+        session = ManagementActivitySession.objects.create(
+            user=user,
+            content=activity_content,
+            content_type='activity',
+            activity_code='task_switch',
+            management_day=4,
+            is_assessment=False,
+            status='completed',
+            level=4,
+            difficulty='expert',
+            started_at=timezone.now(),
+            completed_at=timezone.now() + timedelta(seconds=164),
+            session_duration_seconds=164,
+            target_count=24,
+            completed_count=24,
+            correct_count=20,
+            incorrect_count=3,
+            missed_count=1,
+            assisted_count=0,
+            action_count=24,
+            average_response_time_ms=1380,
+            accuracy_rate=83.33,
+            completion_rate=100,
+            response_control_score=80,
+            speed_score=78,
+            attention_score=82,
+            performance_score=84,
+            final_score=83,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        selected_day = response.data['data']['results'][0]['selected_day']
+        assert selected_day['sessions_count'] == 1
+        activity = selected_day['sessions'][0]
+        assert activity['id'] == session.id
+        assert activity['content_type'] == 'activity'
+        assert activity['content_label'] == 'ACTIVITY'
+        assert activity['activity_code'] == 'task_switch'
+        assert activity['management_day'] == 4
+        assert activity['final_score'] == 83
+        assert activity['attention_score'] == 82
+        assert activity['performance_score'] == 84
+        assert activity['duration_label'] == '2m'
+
+    def test_save_management_activity_score_rejects_user_payload(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.MANAGEMENT_ACTIVITY_SCORE_URL,
+            self.full_activity_payload(user=1),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['errors']['user'] == 'Unknown field.'
+
+    def test_save_management_activity_score_rejects_invalid_counts(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.MANAGEMENT_ACTIVITY_SCORE_URL,
+            self.full_activity_payload(target_count=10, completed_count=11),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['errors']['completed_count'] == 'Cannot exceed target_count.'
 
     def test_save_frontend_attention_score(self, api_client, user):
         api_client.force_authenticate(user=user)

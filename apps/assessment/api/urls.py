@@ -29,6 +29,10 @@ urlpatterns = [
             'management/latest-week',
             views.ManagementLatestWeekApiView.as_view(),
         ),
+        path(
+            'management/activity-score',
+            views.ManagementActivityScoreSaveApiView.as_view(),
+        ),
 
     ]))
 ]

@@ -24,10 +24,11 @@ from apps.assessment.schemas import (
     AIAssessmentScoreSchema, SelfAssessmentQuestionsListSchema,
     SelfAssessmentResultSchema,
 )
-from apps.progresstracker.models import FaceAttentionSession
+from apps.progresstracker.models import FaceAttentionSession, ManagementActivitySession
 from django.utils import timezone
 from .serializers import (
     FrontendAttentionScoreSerializer,
+    ManagementActivityScoreSerializer,
     SelfAssessmentResponseSerializer
 )
 from apps.assessment.cache import (
@@ -363,6 +364,52 @@ class FrontendAttentionScoreSaveApiView(generics.GenericAPIView):
             return safe_exception_response(e, context={'view': self})
 
 
+class ManagementActivityScoreSaveApiView(generics.GenericAPIView):
+    serializer_class = ManagementActivityScoreSerializer
+    permission_classes = (IsAuthenticated,)
+
+    @swagger_auto_schema(
+        tags=["Management"],
+        operation_id='Save Management Activity Score',
+        operation_description=(
+            "Save frontend-generated management activity telemetry. "
+            "The authenticated JWT user owns the saved score."
+        ),
+        request_body=ManagementActivityScoreSerializer,
+    )
+    def post(self, request):
+        try:
+            serializer = self.serializer_class(
+                data=request.data,
+                context={'request': request},
+            )
+            if not serializer.is_valid():
+                response_format = ResponseInfo().response
+                response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+                response_format["status"] = False
+                response_format["message"] = "Validation Error"
+                response_format["errors"] = serializer.errors
+                return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
+
+            instance = serializer.save()
+
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_201_CREATED
+            response_format["message"] = _success
+            response_format["status"] = True
+            response_format["data"] = self.serializer_class(instance).data
+            return Response(response_format, status=status.HTTP_201_CREATED)
+        except ValidationError as e:
+            response_format = ResponseInfo().response
+            response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+            response_format["status"] = False
+            response_format["message"] = "Validation Error"
+            response_format["errors"] = e.detail
+            return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+
 class ManagementDashboardApiView(generics.GenericAPIView):
     serializer_class = serializers.Serializer
     permission_classes = (IsAuthenticated,)
@@ -420,6 +467,15 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             .order_by('created_at', 'id')
         )
 
+    @staticmethod
+    def _get_user_management_activity_sessions(user):
+        return list(
+            ManagementActivitySession.objects
+            .filter(user=user, is_assessment=False)
+            .select_related('content')
+            .order_by('created_at', 'id')
+        )
+
     @classmethod
     def _build_dashboard_data(cls, sessions, weeks_count):
         week_buckets = defaultdict(list)
@@ -460,12 +516,19 @@ class ManagementDashboardApiView(generics.GenericAPIView):
         }
 
     @classmethod
-    def _build_all_week_details(cls, sessions, selected_date=None):
+    def _build_all_week_details(cls, sessions, selected_date=None, activity_sessions=None):
+        activity_sessions = activity_sessions or []
         week_buckets = defaultdict(list)
         day_buckets = defaultdict(list)
 
         for session in sessions:
             session_date = timezone.localtime(session.created_at).date()
+            week_start = session_date - timedelta(days=session_date.weekday())
+            week_buckets[week_start].append(session)
+            day_buckets[session_date].append(session)
+
+        for session in activity_sessions:
+            session_date = timezone.localtime(session.started_at).date()
             week_start = session_date - timedelta(days=session_date.weekday())
             week_buckets[week_start].append(session)
             day_buckets[session_date].append(session)
@@ -537,6 +600,8 @@ class ManagementDashboardApiView(generics.GenericAPIView):
 
     @staticmethod
     def _session_score(session):
+        if isinstance(session, ManagementActivitySession):
+            return round(session.final_score, 2)
         return round((session.average_concentration_score / 8.0) * 100, 2)
 
     @classmethod
@@ -588,9 +653,70 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             "status_label": cls._day_status(total_score) if sessions else "",
             "sessions_count": len(sessions),
             "sessions": [
-                cls._serialize_session(session)
-                for session in sorted(sessions, key=lambda item: (item.created_at, item.id))
+                cls._serialize_management_session(session)
+                for session in sorted(
+                    sessions,
+                    key=lambda item: (cls._session_started_at(item), item.id),
+                )
             ],
+        }
+
+    @classmethod
+    def _serialize_management_session(cls, session):
+        if isinstance(session, ManagementActivitySession):
+            return cls._serialize_activity_session(session)
+        return cls._serialize_session(session)
+
+    @staticmethod
+    def _session_started_at(session):
+        if isinstance(session, ManagementActivitySession):
+            return session.started_at
+        return session.created_at
+
+    @classmethod
+    def _serialize_activity_session(cls, session):
+        local_started_at = timezone.localtime(session.started_at)
+        local_completed_at = timezone.localtime(session.completed_at) if session.completed_at else None
+        content = session.content
+
+        return {
+            "id": session.id,
+            "user_id": session.user_id,
+            "file": content.id if content else None,
+            "session_id": "",
+            "file_id": content.id if content else None,
+            "file_title": content.title if content else session.activity_code.replace('_', ' ').title(),
+            "content_type": session.content_type,
+            "content_label": "ACTIVITY",
+            "activity_code": session.activity_code,
+            "management_day": session.management_day,
+            "is_assessment": session.is_assessment,
+            "status": session.status,
+            "level": session.level,
+            "difficulty": session.difficulty,
+            "score": round(session.final_score, 2),
+            "final_score": round(session.final_score, 2),
+            "target_count": session.target_count,
+            "completed_count": session.completed_count,
+            "correct_count": session.correct_count,
+            "incorrect_count": session.incorrect_count,
+            "missed_count": session.missed_count,
+            "assisted_count": session.assisted_count,
+            "action_count": session.action_count,
+            "average_response_time_ms": round(session.average_response_time_ms, 2),
+            "accuracy_rate": round(session.accuracy_rate, 2),
+            "completion_rate": round(session.completion_rate, 2),
+            "response_control_score": round(session.response_control_score, 2),
+            "speed_score": round(session.speed_score, 2),
+            "attention_score": round(session.attention_score, 2),
+            "performance_score": round(session.performance_score, 2),
+            "started_at": local_started_at.isoformat(),
+            "completed_at": local_completed_at.isoformat() if local_completed_at else "",
+            "created_at": timezone.localtime(session.created_at).isoformat(),
+            "time_label": local_started_at.strftime("%I:%M %p").lstrip("0"),
+            "session_duration_seconds": round(session.session_duration_seconds, 2),
+            "duration_seconds": round(session.session_duration_seconds, 2),
+            "duration_label": cls._format_duration(session.session_duration_seconds),
         }
 
     @classmethod
@@ -727,9 +853,11 @@ class ManagementLatestWeekApiView(generics.GenericAPIView):
                 return Response(cached_response, status=status.HTTP_200_OK)
 
             sessions = ManagementDashboardApiView._get_user_management_sessions(request.user)
+            activity_sessions = ManagementDashboardApiView._get_user_management_activity_sessions(request.user)
             week_details = ManagementDashboardApiView._build_all_week_details(
                 sessions,
                 selected_date=selected_date,
+                activity_sessions=activity_sessions,
             )
             paginated_week_details = ManagementDashboardApiView._paginate_week_details(
                 request,

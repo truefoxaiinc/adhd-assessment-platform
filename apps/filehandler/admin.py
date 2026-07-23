@@ -5,9 +5,9 @@ from unfold.admin import ModelAdmin
 
 @admin.register(AdhdContent)
 class AdhdContentAdmin(ModelAdmin):
-    list_display = ('title', 'content_phase', 'file_type', 'age_group', 'day', 'order_number', 'created_at')
-    list_filter = ('is_management', 'age_group', 'file_type', 'day')
-    search_fields = ('title', 'file__name')
+    list_display = ('title', 'content_phase', 'file_type', 'activity_name', 'age_group', 'day', 'order_number', 'created_at')
+    list_filter = ('is_management', 'age_group', 'file_type', 'activity_name', 'day')
+    search_fields = ('title', 'activity_name', 'file__name')
     ordering = ('is_management', 'age_group', 'day', 'order_number')
     date_hierarchy = 'created_at'
     list_per_page = 25

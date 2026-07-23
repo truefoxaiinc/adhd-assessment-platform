@@ -45,6 +45,7 @@ def adult_day_one_video():
 @pytest.mark.django_db
 class TestFileHandlerViews:
     UPDATE_PROGRESS_URL = '/api/filehandler/v1/filehandler/update-learning-progress/'
+    LIST_FILES_URL = '/api/filehandler/v1/filehandler/list-all-files/'
 
     def test_upload_file_unauthenticated(self, api_client):
         url = '/api/filehandler/v1/filehandler/upload-file/'
@@ -98,6 +99,53 @@ class TestFileHandlerViews:
             day_number=1,
             file_type='video',
             order_number='1',
+        ).exists()
+
+    def test_list_management_files_includes_daily_activity(self, api_client, user):
+        AdhdContent.objects.create(
+            title='Memory Flip',
+            is_management=True,
+            age_group='adult',
+            day=1,
+            file_type='activity',
+            activity_name='memory_flip',
+            order_number=5,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.LIST_FILES_URL, {'is_management': 'true'})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+        activity = response.data['data'][0]
+        assert activity['file_type'] == 'activity'
+        assert activity['activity_name'] == 'memory_flip'
+        assert activity['file'] in ('', None)
+
+    def test_update_learning_progress_saves_activity_progress(self, api_client, user):
+        activity = AdhdContent.objects.create(
+            title='Memory Flip',
+            is_management=True,
+            age_group='adult',
+            day=1,
+            file_type='activity',
+            activity_name='memory_flip',
+            order_number=5,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.UPDATE_PROGRESS_URL,
+            {'file_id': activity.id},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert ProgressTracker.objects.filter(
+            user=user,
+            day_number=1,
+            file_type='activity',
+            order_number='5',
         ).exists()
 
     def test_update_learning_progress_rejects_invalid_file_id(self, api_client, user):
