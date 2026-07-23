@@ -315,6 +315,86 @@ class TestJWTAuthenticationUserState:
         )
 
 
+@pytest.mark.django_db
+class TestDeleteAccountApi:
+    delete_account_url = '/api/users/v1/users/delete-account'
+
+    def test_logged_in_user_can_deactivate_own_account(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.delete_account_url,
+            {'action': 'deactivate'},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+        assert response.data['data'] == {
+            'action': 'deactivate',
+            'is_active': False,
+            'is_deleted': False,
+        }
+        user.refresh_from_db()
+        assert user.is_active is False
+        assert user.is_deleted is False
+
+    def test_logged_in_user_can_soft_delete_own_account(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.delete_account_url,
+            {'action': 'delete'},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] is True
+        assert response.data['data'] == {
+            'action': 'delete',
+            'is_active': False,
+            'is_deleted': True,
+        }
+        user.refresh_from_db()
+        assert user.is_active is False
+        assert user.is_deleted is True
+
+    def test_delete_account_rejects_user_id_payload(self, api_client, user):
+        other_user = Users.objects.create_user(
+            username='other_delete_user',
+            email='other_delete_user@test.com',
+            password='Password123!',
+            is_verified=True,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.delete_account_url,
+            {'action': 'delete', 'user': other_user.id},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        user.refresh_from_db()
+        other_user.refresh_from_db()
+        assert user.is_active is True
+        assert user.is_deleted is False
+        assert other_user.is_active is True
+        assert other_user.is_deleted is False
+
+    def test_delete_account_requires_authentication(self, api_client):
+        response = api_client.post(
+            self.delete_account_url,
+            {'action': 'delete'},
+            format='json',
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
 class TestProductionSecretConfig:
     def test_missing_production_secret_fails_fast(self, monkeypatch):
         monkeypatch.setattr(project_settings, 'IS_PRODUCTION', True)

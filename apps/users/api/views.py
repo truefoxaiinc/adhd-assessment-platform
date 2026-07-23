@@ -20,7 +20,8 @@ from .serializers import (
     UserUpdateProfileSerializer,
     PasswordResetRequestSerializer,
     PasswordResetOTPVerifySerializer,
-    PasswordResetChangeSerializer
+    PasswordResetChangeSerializer,
+    DeleteAccountSerializer
 )
 from apps.users.models import (
     OAuthAccount,
@@ -283,6 +284,57 @@ class PasswordChangeApiView(generics.GenericAPIView):
             self.response_format["status"] = False
             self.response_format["errors"] = e.detail
             return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return safe_exception_response(e, context={'view': self})
+
+
+class DeleteAccountApiView(generics.GenericAPIView):
+    def __init__(self, **kwargs):
+        self.response_format = ResponseInfo().response
+        super(DeleteAccountApiView, self).__init__(**kwargs)
+
+    serializer_class = DeleteAccountSerializer
+    permission_classes = (IsAuthenticated,)
+
+    @swagger_auto_schema(
+        tags=["Profile"],
+        request_body=DeleteAccountSerializer,
+        operation_id='Delete or Deactivate Account',
+        operation_description="This API allows the logged-in user to deactivate or soft delete their own account.",
+    )
+    def post(self, request):
+        try:
+            serializer = self.serializer_class(data=request.data, context={'request': request})
+            if not serializer.is_valid():
+                self.response_format['status_code'] = status.HTTP_400_BAD_REQUEST
+                self.response_format["status"] = False
+                self.response_format["errors"] = serializer.errors
+                return Response(self.response_format, status=status.HTTP_400_BAD_REQUEST)
+
+            action = serializer.validated_data['action']
+            user = request.user
+
+            user.is_active = False
+            update_fields = ['is_active']
+            if action == 'delete':
+                user.is_deleted = True
+                update_fields.append('is_deleted')
+            user.save(update_fields=update_fields)
+
+            self.response_format['status_code'] = status.HTTP_200_OK
+            self.response_format["status"] = True
+            self.response_format["message"] = (
+                "Account deleted successfully"
+                if action == 'delete'
+                else "Account deactivated successfully"
+            )
+            self.response_format["data"] = {
+                "action": action,
+                "is_active": user.is_active,
+                "is_deleted": user.is_deleted,
+            }
+            return Response(self.response_format, status=status.HTTP_200_OK)
+
         except Exception as e:
             return safe_exception_response(e, context={'view': self})
 

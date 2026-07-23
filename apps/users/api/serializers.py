@@ -174,6 +174,19 @@ class PasswordResetChangeSerializer(serializers.Serializer):
         return super().validate(attrs)
 
 
+class DeleteAccountSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=['deactivate', 'delete'], required=True)
+
+    def validate(self, attrs):
+        allowed_fields = {'action'}
+        extra_fields = set(self.initial_data.keys()) - allowed_fields
+        if extra_fields:
+            raise serializers.ValidationError({
+                field: 'This field is not allowed.' for field in sorted(extra_fields)
+            })
+        return super().validate(attrs)
+
+
 class SocialLoginSerializer(serializers.Serializer):
     provider = serializers.ChoiceField(choices=['google', 'facebook'], required=True)
     id_token = serializers.CharField(required=True, trim_whitespace=True)

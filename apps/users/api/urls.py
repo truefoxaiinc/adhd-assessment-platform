@@ -13,6 +13,7 @@ urlpatterns = [
             path('password-reset/otp-verify', views.PasswordResetOTPVerifyApiView.as_view()),
             path('password-reset/change', views.PasswordChangeApiView.as_view()),
             path('social-login', views.SocialLoginView.as_view()),
+            path('delete-account', views.DeleteAccountApiView.as_view()),
         ])),
 
     ]))
