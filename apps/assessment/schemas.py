@@ -6,7 +6,7 @@ from apps.progresstracker.models import FaceAttentionSession
 class SelfAssessmentQuestionsListSchema(serializers.ModelSerializer):
     class Meta:
         model = SelfAssessmentQuestions
-        fields = ['id','question_text','category']
+        fields = ['id','question_text','category','age_group']
 
 
     def to_representation(self, instance):

@@ -1,10 +1,12 @@
 from django.db.models import Q
 from apps.assessment.models import SelfAssessmentResponse,SelfAssessmentResult
+from apps.assessment.selectors import normalize_assessment_age_group
 
 class ResultService:
-    def __init__(self,instance,is_adult=False):
+    def __init__(self,instance,is_adult=False,age_group=None):
         self.instance         = instance
         self.is_adult         = is_adult
+        self.age_group        = normalize_assessment_age_group(age_group if age_group is not None else is_adult)
         self.initial_query    = SelfAssessmentResponse.objects.filter(Q(result_entry=self.instance))
         self.confirm_adhd     = False
 
@@ -32,7 +34,7 @@ class ResultService:
         responses = list(
             self.initial_query
             .select_related('question')
-            .filter(question__is_for_adults=self.is_adult)
+            .filter(question__age_group=self.age_group)
         )
 
         raw_total = 0

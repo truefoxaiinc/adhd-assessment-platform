@@ -3,11 +3,22 @@ from django.db.models import Q
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
 
 
-def get_active_questions_for_user_type(is_for_adults):
+def normalize_assessment_age_group(age_group):
+    if age_group is True:
+        return 'adult'
+    if age_group is False or age_group is None:
+        return 'child'
+    if age_group not in ('child', 'adolescents', 'adult'):
+        return 'adult'
+    return age_group
+
+
+def get_active_questions_for_user_type(age_group):
+    age_group = normalize_assessment_age_group(age_group)
     return (
         SelfAssessmentQuestions.objects
-        .filter(Q(is_for_adults=is_for_adults) & Q(is_active=True))
-        .only('id', 'question_text', 'category', 'is_for_adults', 'is_active')
+        .filter(Q(age_group=age_group) & Q(is_active=True))
+        .only('id', 'question_text', 'category', 'age_group', 'is_for_adults', 'is_active')
         .order_by('-id')
     )
 

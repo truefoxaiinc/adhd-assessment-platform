@@ -33,14 +33,14 @@ def bump_cache_version(key):
         pass
 
 
-def get_questions_cache_key(request, is_for_adults):
+def get_questions_cache_key(request, age_group):
     version = cache_get(QUESTIONS_CACHE_VERSION_KEY, 1)
     normalized_params = {
         key: request.query_params.getlist(key)
         for key in sorted(request.query_params.keys())
     }
     params_hash = hashlib.md5(json.dumps(normalized_params, sort_keys=True).encode()).hexdigest()
-    return f'assessment:questions:v{version}:adult:{is_for_adults}:{params_hash}'
+    return f'assessment:questions:v{version}:age-group:{age_group}:{params_hash}'
 
 
 def get_result_cache_key(user_id):
@@ -49,11 +49,11 @@ def get_result_cache_key(user_id):
     return f'assessment:result:user:{user_id}:v{version}:latest'
 
 
-def get_progress_cache_key(user_id, is_for_adults):
+def get_progress_cache_key(user_id, age_group):
     questions_version = cache_get(QUESTIONS_CACHE_VERSION_KEY, 1)
     result_version_key = RESULT_CACHE_VERSION_KEY_TEMPLATE.format(user_id=user_id)
     result_version = cache_get(result_version_key, 1)
-    return f'assessment:progress:user:{user_id}:adult:{is_for_adults}:qv{questions_version}:rv{result_version}'
+    return f'assessment:progress:user:{user_id}:age-group:{age_group}:qv{questions_version}:rv{result_version}'
 
 
 def get_management_week_details_cache_key(user_id, request):

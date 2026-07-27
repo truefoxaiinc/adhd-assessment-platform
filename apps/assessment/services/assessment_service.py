@@ -1,6 +1,7 @@
 from apps.assessment.models import SelfAssessmentResult
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse
 from apps.assessment.services.scoring_service import ScoringService
+from apps.assessment.selectors import normalize_assessment_age_group
 from django.utils import timezone
 
 
@@ -16,23 +17,25 @@ class AssessmentService:
         return result
 
     @staticmethod
-    def calculate_result(result, is_adult):
-        completion = AssessmentService.get_completion_summary(result, is_adult)
+    def calculate_result(result, age_group):
+        age_group = normalize_assessment_age_group(age_group)
+        completion = AssessmentService.get_completion_summary(result, age_group)
 
         if not completion["is_complete"]:
             return result
 
-        result = ScoringService.calculate_self_assessment(result, is_adult)
+        result = ScoringService.calculate_self_assessment(result, age_group)
         if result.completed_at is None:
             result.completed_at = timezone.now()
             result.save(update_fields=['completed_at'])
         return result
 
     @staticmethod
-    def get_completion_summary(result, is_adult):
+    def get_completion_summary(result, age_group):
+        age_group = normalize_assessment_age_group(age_group)
         expected_question_ids = set(
             SelfAssessmentQuestions.objects.filter(
-                is_for_adults=is_adult,
+                age_group=age_group,
                 is_active=True,
             ).values_list('id', flat=True)
         )

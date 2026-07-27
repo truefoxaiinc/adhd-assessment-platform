@@ -35,6 +35,16 @@ def child_user():
     )
 
 @pytest.fixture
+def adolescent_user():
+    return Users.objects.create_user(
+        username='adolescent_test',
+        email='adolescent_test@test.com',
+        password='Password123!',
+        is_verified=True,
+        dob='2012-01-01'  # adolescents
+    )
+
+@pytest.fixture
 def questions():
     q1 = SelfAssessmentQuestions.objects.create(question_text="Adult Question 1", is_for_adults=True, is_active=True)
     q2 = SelfAssessmentQuestions.objects.create(question_text="Child Question 1", is_for_adults=False, is_active=True)
@@ -165,6 +175,31 @@ class TestAssessmentViews:
         assert len(response.data['data']['questions']) == 1
         assert response.data['data']['questions'][0]['question_text'] == "Child Question 1"
 
+    def test_get_questions_adolescents(self, api_client, adolescent_user):
+        SelfAssessmentQuestions.objects.create(
+            question_text="Child Question",
+            age_group='child',
+            is_active=True,
+        )
+        SelfAssessmentQuestions.objects.create(
+            question_text="Adolescent Question",
+            age_group='adolescents',
+            is_active=True,
+        )
+        SelfAssessmentQuestions.objects.create(
+            question_text="Adult Question",
+            age_group='adult',
+            is_active=True,
+        )
+        api_client.force_authenticate(user=adolescent_user)
+
+        response = api_client.get('/api/assessment/v1/self-assessment/get-questions')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data['data']['questions']) == 1
+        assert response.data['data']['questions'][0]['question_text'] == "Adolescent Question"
+        assert response.data['data']['questions'][0]['age_group'] == "adolescents"
+
     def test_get_questions_unauthenticated(self, api_client):
         url = '/api/assessment/v1/self-assessment/get-questions'
         response = api_client.get(url)
@@ -217,6 +252,23 @@ class TestAssessmentViews:
         response = api_client.post(
             '/api/assessment/v1/self-assessment/save-response',
             {'assesment': [{'question': question.id}]},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['status'] is False
+
+    def test_save_response_rejects_wrong_age_group_question(self, api_client, adolescent_user):
+        api_client.force_authenticate(user=adolescent_user)
+        adult_question = SelfAssessmentQuestions.objects.create(
+            question_text='Adult Only Question',
+            age_group='adult',
+            is_active=True,
+        )
+
+        response = api_client.post(
+            '/api/assessment/v1/self-assessment/save-response',
+            {'assesment': [{'question': adult_question.id, 'response': '3'}]},
             format='json',
         )
 

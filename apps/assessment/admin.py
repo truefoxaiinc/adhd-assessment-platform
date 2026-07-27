@@ -20,6 +20,7 @@ class SelfAssessmentQuestionsAdmin(ModelAdmin, ImportExportModelAdmin):
         'category_badge',
         'question_text',
         'category_num',
+        'age_group',
         'audience_badge',
         'active_badge',
         'created_date',
@@ -27,6 +28,7 @@ class SelfAssessmentQuestionsAdmin(ModelAdmin, ImportExportModelAdmin):
     list_filter = (
         'created_date',
         'modified_date',
+        'age_group',
         'is_for_adults',
         'is_active',
     )
@@ -45,7 +47,7 @@ class SelfAssessmentQuestionsAdmin(ModelAdmin, ImportExportModelAdmin):
 
     @admin.display(description='Audience', ordering='is_for_adults')
     def audience_badge(self, obj):
-        return 'Adults' if obj.is_for_adults else 'Children'
+        return obj.get_age_group_display() if obj.age_group else ('Adults' if obj.is_for_adults else 'Children')
 
     @admin.display(description='Active', boolean=True, ordering='is_active')
     def active_badge(self, obj):

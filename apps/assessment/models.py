@@ -1,6 +1,7 @@
 from django.db import models
 from django.core.exceptions import ObjectDoesNotExist
 from django.utils.translation import gettext_lazy as _
+from apps.filehandler.models import AgeGroupCategory
 from apps.users.models import Users
 from helpers.abstract_models import AbstractDateFieldMix
 
@@ -17,6 +18,7 @@ class SelfAssessmentQuestions(AbstractDateFieldMix):
     question_text         = models.CharField(_('Question Text'), max_length = 300, blank = True, null = True)
     category              = models.CharField(_('Question Category'),choices=QUESTION_CATEGORY, max_length = 300, default=QUESTION_CATEGORY.N, blank = True, null = True)
     category_num          = models.CharField(_('Category Number'), max_length = 300, blank = True, null = True)
+    age_group             = models.CharField(_('Age Group'), max_length=50, choices=AgeGroupCategory.choices, blank=True, null=True)
     is_for_adults         = models.BooleanField(default = False)
     is_active             = models.BooleanField(default = True)
 
@@ -26,10 +28,17 @@ class SelfAssessmentQuestions(AbstractDateFieldMix):
         db_table              = 'SelfAssessmentQuestions'
         indexes = [
             models.Index(fields=['is_for_adults', 'is_active', '-id']),
+            models.Index(fields=['age_group', 'is_active', '-id']),
         ]
 
     def __str__(self):
         return self.question_text or ''
+
+    def save(self, *args, **kwargs):
+        if not self.age_group:
+            self.age_group = AgeGroupCategory.ADULT if self.is_for_adults else AgeGroupCategory.CHILD
+        self.is_for_adults = self.age_group == AgeGroupCategory.ADULT
+        super().save(*args, **kwargs)
        
 
 class SelfAssessmentResult(models.Model):

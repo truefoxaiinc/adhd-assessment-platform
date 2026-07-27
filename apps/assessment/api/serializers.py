@@ -9,6 +9,7 @@ from apps.progresstracker.models import (
 )
 from apps.progresstracker.services.track_services import ProgressTrackerActions
 from apps.assessment.cache import bump_user_management_cache
+from apps.assessment.selectors import normalize_assessment_age_group
 from django.db import transaction
 from helpers.helper import get_token_user_or_none,get_object_or_none
 from rest_framework.exceptions import ValidationError
@@ -46,7 +47,8 @@ class SelfAssessmentSubSerializer(serializers.ModelSerializer):
 
         request = self.context.get('request') or getattr(self.root, 'context', {}).get('request')
         user_instance = get_token_user_or_none(request) if request else None
-        if user_instance and question_instance.is_for_adults != bool(user_instance.adult):
+        user_age_group = normalize_assessment_age_group(user_instance.age_category if user_instance else None)
+        if user_instance and question_instance.age_group != user_age_group:
             raise ValidationError({'question': 'Question does not match current user age group.'})
 
         attrs['_question_instance'] = question_instance
@@ -104,9 +106,9 @@ class SelfAssessmentResponseSerializer(serializers.ModelSerializer):
             sub_serializer = SelfAssessmentSubSerializer(context={'request':request,'result_instance':instance})
             sub_serializer.create(results)
 
-        is_adult = bool(user_instance.adult)
+        age_group = normalize_assessment_age_group(user_instance.age_category)
 
-        instance = AssessmentService.calculate_result(instance, is_adult)
+        instance = AssessmentService.calculate_result(instance, age_group)
 
         return instance
 

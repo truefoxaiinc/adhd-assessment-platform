@@ -17,6 +17,7 @@ from math import ceil
 logger = logging.getLogger(__name__)
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResponse, SelfAssessmentResult
 from apps.assessment.selectors import get_active_questions_for_user_type
+from apps.assessment.selectors import normalize_assessment_age_group
 from helpers.custom_messages import _success,_record_not_found
 from apps.assessment.services.scoring_service import ScoringService
 from apps.assessment.services.assessment_service import AssessmentService
@@ -56,14 +57,14 @@ class GetSelfAssessmentQuestionsListApiView(generics.GenericAPIView):
 
         try:
             user_instance   = get_token_user_or_none(request)
-            is_for_adults   = bool(user_instance.adult)
+            age_group = normalize_assessment_age_group(user_instance.age_category)
 
-            cache_key = get_questions_cache_key(request, is_for_adults)
+            cache_key = get_questions_cache_key(request, age_group)
             cached_data = cache_get(cache_key)
             if cached_data:
                 return Response(cached_data, status=status.HTTP_200_OK)
 
-            queryset = get_active_questions_for_user_type(is_for_adults)
+            queryset = get_active_questions_for_user_type(age_group)
             data = self.serializer_class(queryset, many=True, context={'request': request}).data
 
             final_data = {"questions": data}
@@ -134,7 +135,7 @@ class ResultFetchApiView(generics.GenericAPIView):
 
         try:
             user_instance   = get_token_user_or_none(request)
-            is_for_adults = bool(user_instance.adult)
+            age_group = normalize_assessment_age_group(user_instance.age_category)
             
             cache_key = get_result_cache_key(user_instance.id)
             cached_data = cache_get(cache_key)
@@ -153,7 +154,7 @@ class ResultFetchApiView(generics.GenericAPIView):
                 was_incomplete = latest_result.completed_at is None
                 latest_result = AssessmentService.calculate_result(
                     latest_result,
-                    is_for_adults,
+                    age_group,
                 )
                 if was_incomplete and latest_result.completed_at is not None:
                     bump_user_result_cache(user_instance.id)
@@ -191,7 +192,7 @@ class ResultFetchApiView(generics.GenericAPIView):
                 if latest_result is not None:
                     completion = AssessmentService.get_completion_summary(
                         latest_result,
-                        is_for_adults,
+                        age_group,
                     )
                     data = SelfAssessmentResultSchema(
                         latest_result,
@@ -902,10 +903,10 @@ class SelfAssessmentProgressApiView(generics.GenericAPIView):
     def get(self, request):
         try:
             user_instance = get_token_user_or_none(request)
-            is_for_adults = bool(user_instance.adult)
+            age_group = normalize_assessment_age_group(user_instance.age_category)
 
             requested_question_id = request.query_params.get('question_id')
-            cache_key = get_progress_cache_key(user_instance.id, is_for_adults)
+            cache_key = get_progress_cache_key(user_instance.id, age_group)
             if requested_question_id:
                 cache_key += f"_{requested_question_id}"
 
@@ -923,8 +924,8 @@ class SelfAssessmentProgressApiView(generics.GenericAPIView):
 
             questions = list(
                 SelfAssessmentQuestions.objects
-                .filter(is_for_adults=is_for_adults, is_active=True)
-                .only('id', 'question_text', 'category')
+                .filter(age_group=age_group, is_active=True)
+                .only('id', 'question_text', 'category', 'age_group')
                 .order_by('id')
             )
 
@@ -956,6 +957,7 @@ class SelfAssessmentProgressApiView(generics.GenericAPIView):
                     'question_id': question.id,
                     'question_text': question.question_text or '',
                     'category': question.category or '',
+                    'age_group': question.age_group or '',
                     'is_answered': is_answered,
                     'status': 'completed' if is_answered else 'pending',
                     'response_id': saved_response.id if saved_response else None,
