@@ -7,6 +7,7 @@ from django.core.cache import cache
 ASSESSMENT_CACHE_TIMEOUT = 60 * 15
 QUESTIONS_CACHE_VERSION_KEY = 'assessment:questions:version'
 RESULT_CACHE_VERSION_KEY_TEMPLATE = 'assessment:result:user:{user_id}:version'
+MANAGEMENT_WEEK_DETAILS_GLOBAL_VERSION_KEY = 'assessment:management:week-details:global:version'
 MANAGEMENT_WEEK_DETAILS_VERSION_KEY_TEMPLATE = 'assessment:management:week-details:user:{user_id}:version'
 
 
@@ -57,6 +58,7 @@ def get_progress_cache_key(user_id, age_group):
 
 
 def get_management_week_details_cache_key(user_id, request):
+    global_version = cache_get(MANAGEMENT_WEEK_DETAILS_GLOBAL_VERSION_KEY, 1)
     version_key = MANAGEMENT_WEEK_DETAILS_VERSION_KEY_TEMPLATE.format(user_id=user_id)
     version = cache_get(version_key, 1)
     normalized_params = {
@@ -64,7 +66,7 @@ def get_management_week_details_cache_key(user_id, request):
         for key in sorted(request.query_params.keys())
     }
     params_hash = hashlib.md5(json.dumps(normalized_params, sort_keys=True).encode()).hexdigest()
-    return f'assessment:management:week-details:user:{user_id}:v{version}:{params_hash}'
+    return f'assessment:management:week-details:g{global_version}:user:{user_id}:v{version}:{params_hash}'
 
 
 def bump_user_result_cache(user_id):
@@ -75,3 +77,7 @@ def bump_user_result_cache(user_id):
 def bump_user_management_cache(user_id):
     if user_id:
         bump_cache_version(MANAGEMENT_WEEK_DETAILS_VERSION_KEY_TEMPLATE.format(user_id=user_id))
+
+
+def bump_global_management_cache():
+    bump_cache_version(MANAGEMENT_WEEK_DETAILS_GLOBAL_VERSION_KEY)

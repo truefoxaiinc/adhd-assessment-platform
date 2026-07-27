@@ -1,6 +1,6 @@
 import pytest
 from rest_framework import status
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory
 from django.core.cache import cache
 from django.utils import timezone
 from datetime import timedelta
@@ -9,10 +9,15 @@ from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult
 from services.assessment_result.assessment_result_services import ResultService
 from apps.filehandler.models import AdhdContent
 from apps.progresstracker.models import FaceAttentionSession, ManagementActivitySession, ProgressTracker, UserAssessmentDetails
+from apps.assessment.cache import cache_get, cache_set, get_management_week_details_cache_key
 
 @pytest.fixture
 def api_client():
     return APIClient()
+
+@pytest.fixture
+def api_request_factory():
+    return APIRequestFactory()
 
 @pytest.fixture
 def user():
@@ -427,6 +432,47 @@ class TestAssessmentViews:
         assert response.data['status'] is True
         assert response.data['data']['id'] != completed_result.id
         assert SelfAssessmentResult.objects.filter(user=user).count() == 2
+
+    def test_management_cache_invalidates_on_attention_session_change(self, api_request_factory, user):
+        request = api_request_factory.get('/api/assessment/v1/management/latest-week')
+        request.user = user
+        cache_key_before = get_management_week_details_cache_key(user.id, request)
+        cache_set(cache_key_before, {'cached': True})
+
+        FaceAttentionSession.objects.create(
+            user=user,
+            session_id='cache-session',
+            is_assessment=False,
+            final_score=80,
+            concentration_score=6.4,
+            average_concentration_score=6.4,
+        )
+
+        cache_key_after = get_management_week_details_cache_key(user.id, request)
+        assert cache_key_after != cache_key_before
+        assert cache_get(cache_key_before) == {'cached': True}
+        assert cache_get(cache_key_after) is None
+
+    def test_management_cache_invalidates_on_management_content_change(self, api_request_factory, user):
+        request = api_request_factory.get('/api/assessment/v1/management/latest-week')
+        request.user = user
+        cache_key_before = get_management_week_details_cache_key(user.id, request)
+        cache_set(cache_key_before, {'cached': True})
+
+        AdhdContent.objects.create(
+            title='Cache Activity',
+            is_management=True,
+            age_group='adult',
+            day=1,
+            file_type='activity',
+            activity_name='memory_flip',
+            order_number=1,
+        )
+
+        cache_key_after = get_management_week_details_cache_key(user.id, request)
+        assert cache_key_after != cache_key_before
+        assert cache_get(cache_key_before) == {'cached': True}
+        assert cache_get(cache_key_after) is None
 
     def test_ai_score_history_filters_assessment_sessions(self, api_client, user):
         other_user = Users.objects.create_user(

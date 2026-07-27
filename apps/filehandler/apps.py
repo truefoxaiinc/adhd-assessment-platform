@@ -4,3 +4,6 @@ class AssessmentConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'apps.filehandler'
     label = 'filehandler'
+
+    def ready(self):
+        import apps.filehandler.signals  # noqa

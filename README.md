@@ -171,6 +171,65 @@ CHANNEL_LAYERS = {
 }
 ```
 
+## Cache Behaviour
+
+The project uses Redis-backed Django cache for selected read-heavy APIs. Cached API responses must keep the same response structure as uncached responses.
+
+Cached response timeout:
+
+```text
+15 minutes
+```
+
+Main cached APIs:
+
+```text
+GET /api/assessment/v1/self-assessment/get-questions
+GET /api/assessment/v1/self-assessment/fetch-result
+GET /api/assessment/v1/self-assessment/progress
+GET /api/assessment/v1/management/latest-week
+GET /api/articles/v1/articles/list
+```
+
+Cache invalidation is signal-based. When related database rows are created, updated, or deleted, the cache version is bumped. Old cache entries may remain in Redis until timeout, but the API no longer uses them because the generated cache key changes.
+
+Assessment cache invalidation:
+
+```text
+SelfAssessmentQuestions save/delete   -> clears question cache
+SelfAssessmentResult save/delete      -> clears that user's result/progress cache
+SelfAssessmentResponse save/delete    -> clears that user's result/progress cache
+```
+
+Management cache invalidation:
+
+```text
+FaceAttentionSession save/delete      -> clears that user's management cache
+ManagementActivitySession save/delete -> clears that user's management cache
+ProgressTracker save/delete           -> clears that user's management cache
+UserAssessmentDetails save/delete     -> clears that user's management cache
+AdhdContent management save/delete    -> clears global management cache
+```
+
+Article cache invalidation:
+
+```text
+Article save/delete -> clears article list cache
+```
+
+After cache invalidation, the next request fetches fresh database data and stores the new response in Redis.
+
+For deployment after cache-key or response-field changes, clear Redis once:
+
+```bash
+python manage.py shell
+```
+
+```python
+from django.core.cache import cache
+cache.clear()
+```
+
 ## API Documentation
 
 Swagger UI:
@@ -223,6 +282,7 @@ Common APIs:
 registration
 update-profile
 get-user-profile
+delete-account
 password-reset/request
 password-reset/otp-verify
 password-reset/change
@@ -293,6 +353,32 @@ Security notes:
 - Reset tokens expire and are one-time use.
 - A password reset without `reset_token` is rejected.
 
+#### Delete or Deactivate Account
+
+Logged-in users can deactivate or soft delete their own account. The client must not send a `user_id`; ownership is taken from the JWT.
+
+```text
+POST /api/users/v1/users/delete-account
+```
+
+Deactivate:
+
+```json
+{
+  "action": "deactivate"
+}
+```
+
+Soft delete:
+
+```json
+{
+  "action": "delete"
+}
+```
+
+`deactivate` sets `is_active=false`. `delete` sets `is_active=false` and `is_deleted=true`.
+
 #### Public Registration Security
 
 Public registration creates only normal non-staff users. The API does not allow clients to set or modify:
@@ -326,11 +412,21 @@ GET  progress
 
 The assessment app:
 
-- Fetches adult or child/adolescent questions based on user age.
+- Fetches questions based on the authenticated user's age group.
 - Saves user responses.
 - Calculates assessment score.
 - Returns latest result.
 - Returns progress for mobile UI.
+
+Question age groups:
+
+```text
+age < 11        => child
+11 <= age < 16  => adolescents
+age >= 16       => adult
+```
+
+Questions are stored with `SelfAssessmentQuestions.age_group`. Existing legacy `is_for_adults=true` questions are treated as `adult`, and `is_for_adults=false` questions are treated as `child`.
 
 Example save response payload:
 
