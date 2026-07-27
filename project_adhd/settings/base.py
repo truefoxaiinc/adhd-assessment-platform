@@ -82,19 +82,19 @@ DEBUG = get_env_value('DEBUG', False)
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in config("ALLOWED_HOSTS", default="localhost,127.0.0.1,13.217.234.177").split(",")
+    for host in config("ALLOWED_HOSTS", default="localhost,127.0.0.1,13.217.234.177,attention.truefoxaiinc.com").split(",")
     if host.strip()
 ]
 
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
-    for origin in config("CSRF_TRUSTED_ORIGINS", default="https://13.217.234.177").split(",")
+    for origin in config("CSRF_TRUSTED_ORIGINS", default="https://13.217.234.177,https://attention.truefoxaiinc.com").split(",")
     if origin.strip()
 ]
 
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in config("CORS_ALLOWED_ORIGINS", default="https://13.217.234.177").split(",")
+    for origin in config("CORS_ALLOWED_ORIGINS", default="https://13.217.234.177,https://attention.truefoxaiinc.com").split(",")
     if origin.strip()
 ]
 
