@@ -18,13 +18,13 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path,include,re_path
 from django.views.generic.base import RedirectView
+from django.views.generic import TemplateView
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.conf.urls.static import static
 from django.conf import settings
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
-from django.views.generic import RedirectView
 from apps.payments import views as payment_views
 
 
@@ -48,6 +48,8 @@ schema_view             = get_schema_view(
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', RedirectView.as_view(url='/api/docs'), name='redirect'),
+    path('account-deletion/', TemplateView.as_view(template_name='account_deletion.html'), name='account-deletion'),
+    path('delete-account/', TemplateView.as_view(template_name='account_deletion.html'), name='delete-account-page'),
     path('payment/success/', payment_views.payment_success_page, name='payment-success'),
     path('payment/cancel/', payment_views.payment_cancel_page, name='payment-cancel'),
 

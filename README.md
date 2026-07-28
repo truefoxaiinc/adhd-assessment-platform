@@ -256,6 +256,28 @@ Authorization: Bearer ACCESS_TOKEN
 
 The backend no longer accepts webcam frames over WebSockets. Do not send `user_id` from the client for score or progress updates; the backend reads the authenticated user from the JWT.
 
+## Account Deletion Page
+
+Public Google Play account deletion URL:
+
+```text
+https://attention.truefoxaiinc.com/account-deletion/
+```
+
+Local route:
+
+```text
+GET /account-deletion/
+```
+
+Alias:
+
+```text
+GET /delete-account/
+```
+
+This page explains how users can delete their account from the app, how to request deletion by email if they cannot access the app, and what data is deleted or retained.
+
 ## Main REST API Modules
 
 ### Authentication
