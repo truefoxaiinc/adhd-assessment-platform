@@ -8,6 +8,7 @@ The backend is intentionally API-first. Face and attention detection are perform
 
 ```text
 API docs:              https://attention.truefoxaiinc.com/api/docs/
+Support page:          https://attention.truefoxaiinc.com/attention-minder-support/
 Account deletion page: https://attention.truefoxaiinc.com/account-deletion/
 Account deletion alias: https://attention.truefoxaiinc.com/delete-account/
 ```
@@ -52,6 +53,7 @@ project_adhd.urls
         +-- /api/articles/          -> apps.articles
         +-- /api/payments/          -> apps.payments
         +-- /api/docs/              -> Swagger
+        +-- /attention-minder-support/ -> public App Store support page
         +-- /account-deletion/      -> public Google Play deletion page
         |
         v
@@ -725,6 +727,7 @@ The score is submitted by the frontend and stored in `ManagementActivitySession`
 ## Public Pages
 
 ```text
+/attention-minder-support/  App Store support contact page
 /account-deletion/  Google Play account deletion instructions
 /delete-account/    Alias for account deletion page
 /payment/success/   Stripe payment success landing page
@@ -814,8 +817,9 @@ daphne -b 0.0.0.0 -p 8000 project_adhd.asgi:application
 6. Clear Redis cache if cache keys/response fields changed
 7. Restart Daphne/systemd service
 8. Check /api/docs/
-9. Check /account-deletion/
-10. Check Redis and database connectivity
+9. Check /attention-minder-support/
+10. Check /account-deletion/
+11. Check Redis and database connectivity
 ```
 
 Commands:
