@@ -176,14 +176,24 @@ class PasswordResetChangeSerializer(serializers.Serializer):
 
 class DeleteAccountSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=['deactivate', 'delete'], required=True)
+    password = serializers.CharField(required=True, write_only=True, trim_whitespace=False)
 
     def validate(self, attrs):
-        allowed_fields = {'action'}
+        allowed_fields = {'action', 'password'}
         extra_fields = set(self.initial_data.keys()) - allowed_fields
         if extra_fields:
             raise serializers.ValidationError({
                 field: 'This field is not allowed.' for field in sorted(extra_fields)
             })
+
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        password = attrs.get('password')
+        if not user or not user.is_authenticated:
+            raise serializers.ValidationError({'password': 'Authentication is required.'})
+        if not user.has_usable_password() or not user.check_password(password):
+            raise serializers.ValidationError({'password': 'Invalid password.'})
+
         return super().validate(attrs)
 
 

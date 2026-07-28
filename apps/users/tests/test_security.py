@@ -324,7 +324,7 @@ class TestDeleteAccountApi:
 
         response = api_client.post(
             self.delete_account_url,
-            {'action': 'deactivate'},
+            {'action': 'deactivate', 'password': 'OldPassword123!'},
             format='json',
         )
 
@@ -344,7 +344,7 @@ class TestDeleteAccountApi:
 
         response = api_client.post(
             self.delete_account_url,
-            {'action': 'delete'},
+            {'action': 'delete', 'password': 'OldPassword123!'},
             format='json',
         )
 
@@ -370,7 +370,7 @@ class TestDeleteAccountApi:
 
         response = api_client.post(
             self.delete_account_url,
-            {'action': 'delete', 'user': other_user.id},
+            {'action': 'delete', 'password': 'OldPassword123!', 'user': other_user.id},
             format='json',
         )
 
@@ -385,7 +385,7 @@ class TestDeleteAccountApi:
     def test_delete_account_requires_authentication(self, api_client):
         response = api_client.post(
             self.delete_account_url,
-            {'action': 'delete'},
+            {'action': 'delete', 'password': 'OldPassword123!'},
             format='json',
         )
 
@@ -393,6 +393,37 @@ class TestDeleteAccountApi:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         )
+
+    def test_delete_account_rejects_missing_password(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.delete_account_url,
+            {'action': 'delete'},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['status'] is False
+        user.refresh_from_db()
+        assert user.is_active is True
+        assert user.is_deleted is False
+
+    def test_delete_account_rejects_wrong_password(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.delete_account_url,
+            {'action': 'delete', 'password': 'WrongPassword123!'},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['status'] is False
+        assert response.data['errors']['password'] == ['Invalid password.']
+        user.refresh_from_db()
+        assert user.is_active is True
+        assert user.is_deleted is False
 
 
 class TestProductionSecretConfig:

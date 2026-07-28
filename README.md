@@ -387,7 +387,8 @@ Deactivate:
 
 ```json
 {
-  "action": "deactivate"
+  "action": "deactivate",
+  "password": "CurrentPassword123!"
 }
 ```
 
@@ -395,11 +396,12 @@ Soft delete:
 
 ```json
 {
-  "action": "delete"
+  "action": "delete",
+  "password": "CurrentPassword123!"
 }
 ```
 
-`deactivate` sets `is_active=false`. `delete` sets `is_active=false` and `is_deleted=true`.
+The password must match the logged-in user's current password. `deactivate` sets `is_active=false`. `delete` sets `is_active=false` and `is_deleted=true`.
 
 #### Public Registration Security
 
