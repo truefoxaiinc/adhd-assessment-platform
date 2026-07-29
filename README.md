@@ -222,7 +222,12 @@ Social login request:
 ```json
 {
   "provider": "apple",
-  "id_token": "apple_identity_token_from_frontend"
+  "id_token": "apple_identity_token_from_frontend",
+  "full_name": {
+    "givenName": "Optional Apple given name from first authorization",
+    "familyName": "Optional Apple family name from first authorization"
+  },
+  "username": "Optional preferred username"
 }
 ```
 

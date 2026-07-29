@@ -371,8 +371,39 @@ class SocialLoginView(APIView):
         username = re.sub(r'[^a-zA-Z0-9._@]+', '_', (display_name or '').strip()).strip('._')
         return (username or fallback_username or 'social_user')[:300]
 
+    def _get_social_display_name(self, validated_data):
+        explicit_name = validated_data.get('username') or validated_data.get('name')
+        if explicit_name:
+            return explicit_name
+
+        full_name = validated_data.get('full_name')
+        if isinstance(full_name, str):
+            return full_name.strip()
+        if isinstance(full_name, dict):
+            first_name = (
+                full_name.get('givenName')
+                or full_name.get('given_name')
+                or full_name.get('firstName')
+                or full_name.get('first_name')
+                or ''
+            )
+            last_name = (
+                full_name.get('familyName')
+                or full_name.get('family_name')
+                or full_name.get('lastName')
+                or full_name.get('last_name')
+                or ''
+            )
+        else:
+            first_name = validated_data.get('first_name') or ''
+            last_name = validated_data.get('last_name') or ''
+
+        return ' '.join(part.strip() for part in (first_name, last_name) if part.strip())
+
     def _is_social_placeholder_username(self, username, provider):
         if not username:
+            return True
+        if username.startswith(('google_', 'fb_', 'apple_')):
             return True
         if provider == OAuthProvider.GOOGLE:
             return username.startswith('google_')
@@ -627,7 +658,11 @@ class SocialLoginView(APIView):
                 oauth_account.save(update_fields=update_fields)
             user = oauth_account.user
             user_update_fields = []
-            if self._is_social_placeholder_username(user.username, identity['provider']):
+            should_update_username = (
+                identity.get('username_is_explicit')
+                or self._is_social_placeholder_username(user.username, identity['provider'])
+            )
+            if should_update_username and user.username != identity['username']:
                 user.username = self._get_unique_username(identity['username'])
                 user_update_fields.append('username')
             if identity['email_verified'] and not user.is_verified:
@@ -647,7 +682,11 @@ class SocialLoginView(APIView):
         )
 
         update_fields = []
-        if self._is_social_placeholder_username(user.username, identity['provider']):
+        should_update_username = (
+            identity.get('username_is_explicit')
+            or self._is_social_placeholder_username(user.username, identity['provider'])
+        )
+        if should_update_username and user.username != identity['username']:
             user.username = self._get_unique_username(identity['username'])
             update_fields.append('username')
         if identity['email_verified'] and not user.is_verified:
@@ -692,6 +731,13 @@ class SocialLoginView(APIView):
                 identity = self._verify_facebook_token(token)
             elif provider == 'apple':
                 identity = self._verify_apple_token(token)
+                preferred_username = self._get_social_display_name(serializer.validated_data)
+                if preferred_username:
+                    identity['username'] = self._normalize_social_username(
+                        preferred_username,
+                        identity['username'],
+                    )
+                    identity['username_is_explicit'] = True
             else:
                 return self._error_response('Unsupported provider', status.HTTP_400_BAD_REQUEST)
 

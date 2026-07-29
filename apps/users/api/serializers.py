@@ -200,12 +200,25 @@ class DeleteAccountSerializer(serializers.Serializer):
 class SocialLoginSerializer(serializers.Serializer):
     provider = serializers.ChoiceField(choices=['google', 'facebook', 'apple'], required=True)
     id_token = serializers.CharField(required=True, trim_whitespace=True)
+    name = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    username = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    first_name = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    last_name = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    full_name = serializers.JSONField(required=False)
 
     def validate_provider(self, value):
         return value.lower()
 
     class Meta:
         model = Users
-        fields = ['provider','id_token']
+        fields = [
+            'provider',
+            'id_token',
+            'name',
+            'username',
+            'first_name',
+            'last_name',
+            'full_name',
+        ]
 
 

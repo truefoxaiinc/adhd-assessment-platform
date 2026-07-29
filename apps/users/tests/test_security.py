@@ -465,6 +465,78 @@ class TestAppleSocialLogin:
         assert oauth_account.user == user
         assert user.is_verified is True
 
+    def test_apple_social_login_replaces_google_placeholder_username(self, api_client):
+        user = Users.objects.create_user(
+            username='google_existing-subject',
+            email='existing_social_user@test.com',
+            password='Password123!',
+            is_verified=True,
+        )
+        identity = {
+            'provider': OAuthProvider.APPLE,
+            'provider_subject': 'apple-existing-subject',
+            'email': user.email,
+            'email_verified': True,
+            'username': 'existing_social_user',
+            'dob': None,
+        }
+
+        with patch('apps.users.api.views.SocialLoginView._verify_apple_token', return_value=identity):
+            response = api_client.post(
+                self.social_login_url,
+                {
+                    'provider': 'apple',
+                    'id_token': 'apple.identity.token',
+                    'name': 'Apple User',
+                },
+                format='json',
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        user.refresh_from_db()
+        assert user.username == 'Apple_User'
+
+    def test_apple_social_login_accepts_native_full_name_object(self, api_client):
+        user = Users.objects.create_user(
+            username='random_private_relay_value',
+            email='private_relay@privaterelay.appleid.com',
+            password='Password123!',
+            is_verified=True,
+        )
+        OAuthAccount.objects.create(
+            user=user,
+            provider=OAuthProvider.APPLE,
+            provider_subject='apple-native-name-subject',
+            email=user.email,
+            email_verified=True,
+        )
+        identity = {
+            'provider': OAuthProvider.APPLE,
+            'provider_subject': 'apple-native-name-subject',
+            'email': user.email,
+            'email_verified': True,
+            'username': user.username,
+            'dob': None,
+        }
+
+        with patch('apps.users.api.views.SocialLoginView._verify_apple_token', return_value=identity):
+            response = api_client.post(
+                self.social_login_url,
+                {
+                    'provider': 'apple',
+                    'id_token': 'apple.identity.token',
+                    'full_name': {
+                        'givenName': 'Muhammed',
+                        'familyName': 'Fahad',
+                    },
+                },
+                format='json',
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        user.refresh_from_db()
+        assert user.username == 'Muhammed_Fahad'
+
     def test_apple_social_login_rejects_inactive_linked_user(self, api_client):
         user = Users.objects.create_user(
             username='inactive_apple_user',
