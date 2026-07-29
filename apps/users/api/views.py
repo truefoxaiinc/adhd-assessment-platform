@@ -9,9 +9,12 @@ from rest_framework.response import Response
 from helpers.custom_messages import _success
 import hashlib
 import hmac
+import json
 import os,sys,random
 import re
 import time
+import jwt
+from jwt.algorithms import RSAAlgorithm
 from django.db.models import Q
 from django.db import transaction
 from .serializers import (
@@ -341,6 +344,8 @@ class DeleteAccountApiView(generics.GenericAPIView):
 
 class SocialLoginView(APIView):
     serializer_class = SocialLoginSerializer
+    apple_jwks_url = 'https://appleid.apple.com/auth/keys'
+    apple_issuer = 'https://appleid.apple.com'
 
     def __init__(self, **kwargs):
         self.response_format = ResponseInfo().response
@@ -373,6 +378,8 @@ class SocialLoginView(APIView):
             return username.startswith('google_')
         if provider == OAuthProvider.FACEBOOK:
             return username.startswith('fb_')
+        if provider == OAuthProvider.APPLE:
+            return username.startswith('apple_')
         return False
 
     def _get_unique_username(self, base_username):
@@ -506,6 +513,96 @@ class SocialLoginView(APIView):
             'dob': self._parse_facebook_birthday(profile.get('birthday')),
         }
 
+    def _get_apple_signing_key(self, token):
+        try:
+            token_header = jwt.get_unverified_header(token)
+        except jwt.PyJWTError:
+            raise ValidationError({'id_token': 'Invalid Apple token header'})
+
+        key_id = token_header.get('kid')
+        if not key_id:
+            raise ValidationError({'id_token': 'Apple token is missing key id'})
+
+        try:
+            jwks_response = requests.get(self.apple_jwks_url, timeout=10)
+        except requests.RequestException:
+            raise ValidationError({'id_token': 'Unable to fetch Apple signing keys'})
+
+        if jwks_response.status_code != 200:
+            raise ValidationError({'id_token': 'Unable to fetch Apple signing keys'})
+
+        try:
+            apple_keys = jwks_response.json().get('keys', [])
+        except ValueError:
+            raise ValidationError({'id_token': 'Invalid Apple signing keys response'})
+
+        for key_data in apple_keys:
+            if key_data.get('kid') == key_id:
+                return RSAAlgorithm.from_jwk(json.dumps(key_data))
+
+        raise ValidationError({'id_token': 'Apple signing key was not found'})
+
+    def _normalize_apple_email_verified(self, value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() == 'true'
+        return False
+
+    def _verify_apple_token(self, token):
+        if not settings.APPLE_OAUTH_CLIENT_IDS:
+            raise ValidationError({'provider': 'Apple OAuth client id is not configured'})
+
+        try:
+            payload = jwt.decode(
+                token,
+                key=self._get_apple_signing_key(token),
+                algorithms=['RS256'],
+                audience=settings.APPLE_OAUTH_CLIENT_IDS,
+                issuer=self.apple_issuer,
+            )
+        except jwt.ExpiredSignatureError:
+            raise ValidationError({'id_token': 'Apple token has expired'})
+        except jwt.InvalidAudienceError:
+            raise ValidationError({'id_token': 'Apple token audience mismatch'})
+        except jwt.InvalidIssuerError:
+            raise ValidationError({'id_token': 'Invalid Apple token issuer'})
+        except jwt.PyJWTError:
+            raise ValidationError({'id_token': 'Invalid Apple token'})
+
+        provider_subject = payload.get('sub')
+        if not provider_subject:
+            raise ValidationError({'id_token': 'No subject in Apple token'})
+
+        email = payload.get('email')
+        email_verified = self._normalize_apple_email_verified(payload.get('email_verified'))
+        if not email:
+            oauth_account = OAuthAccount.objects.filter(
+                provider=OAuthProvider.APPLE,
+                provider_subject=provider_subject,
+            ).first()
+            if oauth_account and oauth_account.email:
+                email = oauth_account.email
+                email_verified = oauth_account.email_verified
+            else:
+                raise ValidationError({
+                    'id_token': 'Apple account did not return an email address. Retry first Apple authorization or link an existing account.'
+                })
+        elif not email_verified:
+            raise ValidationError({'id_token': 'Apple email is not verified'})
+
+        return {
+            'provider': OAuthProvider.APPLE,
+            'provider_subject': provider_subject,
+            'email': email,
+            'email_verified': email_verified,
+            'username': self._normalize_social_username(
+                email.split('@')[0],
+                f"apple_{provider_subject}",
+            ),
+            'dob': None,
+        }
+
     @transaction.atomic
     def _get_or_create_social_user(self, identity):
         oauth_account = (
@@ -593,10 +690,16 @@ class SocialLoginView(APIView):
                 identity = self._verify_google_token(token)
             elif provider == 'facebook':
                 identity = self._verify_facebook_token(token)
+            elif provider == 'apple':
+                identity = self._verify_apple_token(token)
             else:
                 return self._error_response('Unsupported provider', status.HTTP_400_BAD_REQUEST)
 
             user, created = self._get_or_create_social_user(identity)
+            if user.is_deleted:
+                return self._error_response('Account is deleted', status.HTTP_403_FORBIDDEN)
+            if not user.is_active:
+                return self._error_response('Account is disabled', status.HTTP_403_FORBIDDEN)
 
             return self._build_success_response(
                 user,

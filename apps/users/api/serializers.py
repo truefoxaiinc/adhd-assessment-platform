@@ -198,7 +198,7 @@ class DeleteAccountSerializer(serializers.Serializer):
 
 
 class SocialLoginSerializer(serializers.Serializer):
-    provider = serializers.ChoiceField(choices=['google', 'facebook'], required=True)
+    provider = serializers.ChoiceField(choices=['google', 'facebook', 'apple'], required=True)
     id_token = serializers.CharField(required=True, trim_whitespace=True)
 
     def validate_provider(self, value):

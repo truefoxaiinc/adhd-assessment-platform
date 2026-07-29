@@ -133,6 +133,11 @@ DB_PORT=5432
 
 JWT_SIGNING_KEY=your_jwt_secret
 
+GOOGLE_OAUTH_CLIENT_IDS=your_google_web_client_id,your_google_ios_client_id
+FACEBOOK_APP_ID=your_facebook_app_id
+FACEBOOK_APP_SECRET=your_facebook_app_secret
+APPLE_OAUTH_CLIENT_IDS=com.your.ios.bundle.id,com.your.apple.service.id
+
 REDIS_CACHE_URL=redis://127.0.0.1:6379/1
 CELERY_BROKER_URL=redis://127.0.0.1:6379/2
 CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2
@@ -207,9 +212,26 @@ Responsibilities:
 Custom user model
 Profile details
 Password reset OTP and reset token flow
-Google/Facebook social login
+Google/Facebook/Apple social login
 Account deactivation and soft deletion
 Goal flags such as is_first and is_last
+```
+
+Social login request:
+
+```json
+{
+  "provider": "apple",
+  "id_token": "apple_identity_token_from_frontend"
+}
+```
+
+Apple login notes:
+
+```text
+APPLE_OAUTH_CLIENT_IDS must contain the allowed Apple token audience values.
+For iOS apps this is usually the bundle id, and for web flows this is the Apple Services ID.
+Apple may only send email on the first authorization, so first login must include email or the Apple account must already be linked.
 ```
 
 Account deletion requires the current password:
@@ -424,7 +446,7 @@ Users
   Custom auth user, profile, soft-delete flags, assessment score, onboarding flags
 
 OAuthAccount
-  Social login provider link for a user
+  Social login provider link for a user. Supported providers: google, facebook, apple
 
 PasswordResetOTP
   Hashed OTP and reset-token state for password reset

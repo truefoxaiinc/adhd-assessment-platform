@@ -107,6 +107,7 @@ class Users(AbstractBaseUser, PermissionsMixin):
 class OAuthProvider(models.TextChoices):
     GOOGLE = 'google', _('Google')
     FACEBOOK = 'facebook', _('Facebook')
+    APPLE = 'apple', _('Apple')
 
 
 class OAuthAccount(models.Model):

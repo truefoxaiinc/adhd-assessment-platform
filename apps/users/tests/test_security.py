@@ -9,7 +9,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.users.models import PasswordResetOTP, Users
+from apps.users.models import OAuthAccount, OAuthProvider, PasswordResetOTP, Users
 from apps.users.services.password_reset_service import PasswordResetService
 from project_adhd import settings as project_settings
 
@@ -432,3 +432,92 @@ class TestProductionSecretConfig:
 
         with pytest.raises(ImproperlyConfigured):
             project_settings.get_secret_config('MISSING_REQUIRED_SECRET_FOR_TEST')
+
+
+@pytest.mark.django_db
+class TestAppleSocialLogin:
+    social_login_url = '/api/users/v1/users/social-login'
+
+    def test_apple_social_login_creates_user_and_oauth_link(self, api_client):
+        identity = {
+            'provider': OAuthProvider.APPLE,
+            'provider_subject': 'apple-subject-123',
+            'email': 'apple_user@test.com',
+            'email_verified': True,
+            'username': 'apple_user',
+            'dob': None,
+        }
+
+        with patch('apps.users.api.views.SocialLoginView._verify_apple_token', return_value=identity):
+            response = api_client.post(
+                self.social_login_url,
+                {'provider': 'apple', 'id_token': 'apple.identity.token'},
+                format='json',
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['status'] is True
+        user = Users.objects.get(email='apple_user@test.com')
+        oauth_account = OAuthAccount.objects.get(
+            provider=OAuthProvider.APPLE,
+            provider_subject='apple-subject-123',
+        )
+        assert oauth_account.user == user
+        assert user.is_verified is True
+
+    def test_apple_social_login_rejects_inactive_linked_user(self, api_client):
+        user = Users.objects.create_user(
+            username='inactive_apple_user',
+            email='inactive_apple_user@test.com',
+            password='Password123!',
+            is_verified=True,
+            is_active=False,
+        )
+        OAuthAccount.objects.create(
+            user=user,
+            provider=OAuthProvider.APPLE,
+            provider_subject='inactive-apple-subject',
+            email=user.email,
+            email_verified=True,
+        )
+        identity = {
+            'provider': OAuthProvider.APPLE,
+            'provider_subject': 'inactive-apple-subject',
+            'email': user.email,
+            'email_verified': True,
+            'username': user.username,
+            'dob': None,
+        }
+
+        with patch('apps.users.api.views.SocialLoginView._verify_apple_token', return_value=identity):
+            response = api_client.post(
+                self.social_login_url,
+                {'provider': 'apple', 'id_token': 'apple.identity.token'},
+                format='json',
+            )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.data['message'] == 'Account is disabled'
+
+    @override_settings(APPLE_OAUTH_CLIENT_IDS=['com.truefox.attentionminder'])
+    def test_apple_login_without_email_requires_existing_oauth_account(self, monkeypatch):
+        view = __import__(
+            'apps.users.api.views',
+            fromlist=['SocialLoginView'],
+        ).SocialLoginView()
+
+        monkeypatch.setattr(view, '_get_apple_signing_key', lambda token: 'signing-key')
+        monkeypatch.setattr(
+            'apps.users.api.views.jwt.decode',
+            lambda *args, **kwargs: {
+                'sub': 'new-apple-subject',
+                'aud': 'com.truefox.attentionminder',
+                'iss': view.apple_issuer,
+                'email_verified': 'true',
+            },
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            view._verify_apple_token('apple.identity.token')
+
+        assert 'email address' in str(exc_info.value.detail['id_token'])

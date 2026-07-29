@@ -41,6 +41,11 @@ GOOGLE_OAUTH_CLIENT_IDS = [
     for client_id in config('GOOGLE_OAUTH_CLIENT_IDS', default='').split(',')
     if client_id.strip()
 ]
+APPLE_OAUTH_CLIENT_IDS = [
+    client_id.strip()
+    for client_id in config('APPLE_OAUTH_CLIENT_IDS', default='').split(',')
+    if client_id.strip()
+]
 FACEBOOK_APP_ID = config('FACEBOOK_APP_ID', default='')
 env = environ.Env(
     DEBUG=(bool, False),
