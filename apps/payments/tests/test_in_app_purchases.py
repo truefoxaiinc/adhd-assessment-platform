@@ -4,6 +4,8 @@ import pytest
 from django.test import override_settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
+from googleapiclient.errors import HttpError
+from httplib2 import Response as HttpResponse
 from rest_framework.test import APIClient
 
 from apps.payments.models import EntitlementStatus, StorePlatform, StorePurchase, SubscriptionEntitlement
@@ -138,6 +140,31 @@ def test_google_purchase_is_verified_with_subscriptions_v2(user):
     )
     assert result['status'] == EntitlementStatus.ACTIVE
     assert result['expires_at'].year == 2099
+
+
+@pytest.mark.django_db
+@override_settings(GOOGLE_PLAY_PACKAGE_NAME='com.trufox.attentionminder')
+def test_google_http_error_is_logged_without_purchase_token(user, caplog):
+    http_error = HttpError(
+        HttpResponse({'status': '401'}),
+        b'{"error":{"code":401,"message":"Invalid Credentials"}}',
+    )
+    execute = MagicMock(side_effect=http_error)
+    get = MagicMock(return_value=MagicMock(execute=execute))
+    service = MagicMock()
+    service.purchases.return_value.subscriptionsv2.return_value.get = get
+
+    with patch('apps.payments.services._google_service', return_value=service):
+        with pytest.raises(Exception) as exc_info:
+            verify_google_purchase(user, {
+                'product_id': 'attentionminder.monthly',
+                'purchase_token': 'secret-server-verification-token',
+            })
+
+    assert 'Google Play could not verify this purchase' in str(exc_info.value)
+    assert 'status=401' in caplog.text
+    assert 'Invalid Credentials' in caplog.text
+    assert 'secret-server-verification-token' not in caplog.text
 
 
 @override_settings(

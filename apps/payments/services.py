@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 from datetime import datetime, timezone as datetime_timezone
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
+from googleapiclient.errors import HttpError
 
 from apps.payments.models import (
     EntitlementStatus,
@@ -19,6 +21,9 @@ from apps.payments.models import (
     StorePurchase,
     SubscriptionEntitlement,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 GOOGLE_ACTIVE_STATES = {
@@ -116,6 +121,10 @@ def _google_service():
             ) from exc
     else:
         raise ImproperlyConfigured('Google Play service-account credentials are not configured')
+    logger.info(
+        'Google Play service account: %s',
+        credentials.service_account_email,
+    )
     return build('androidpublisher', 'v3', credentials=credentials, cache_discovery=False)
 
 
@@ -130,7 +139,22 @@ def verify_google_purchase(user, attrs, allow_inactive=False):
             packageName=package_name,
             token=token,
         ).execute()
+    except HttpError as exc:
+        content = exc.content
+        if isinstance(content, bytes):
+            content = content.decode('utf-8', errors='replace')
+        logger.exception(
+            'Google Play verification failed: status=%s content=%s',
+            getattr(exc.resp, 'status', None),
+            content,
+        )
+        raise ValidationError({'verification_data': 'Google Play could not verify this purchase.'}) from exc
     except Exception as exc:
+        logger.exception(
+            'Unexpected Google Play verification failure: package=%s error_type=%s',
+            package_name,
+            type(exc).__name__,
+        )
         raise ValidationError({'verification_data': 'Google Play could not verify this purchase.'}) from exc
 
     line_items = payload.get('lineItems') or []
