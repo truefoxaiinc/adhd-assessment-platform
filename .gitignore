@@ -33,6 +33,8 @@ Thumbs.db
 
 
 files/*.json
+secrets/
+*-service-account*.json
 
 
 # IDE files

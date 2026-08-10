@@ -7,7 +7,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
@@ -80,15 +80,40 @@ def _google_service():
     from googleapiclient.discovery import build
 
     scopes = ['https://www.googleapis.com/auth/androidpublisher']
-    credentials_json = getattr(settings, 'GOOGLE_PLAY_SERVICE_ACCOUNT_JSON', '')
-    credentials_file = getattr(settings, 'GOOGLE_PLAY_SERVICE_ACCOUNT_FILE', '')
+    credentials_json = getattr(settings, 'GOOGLE_PLAY_SERVICE_ACCOUNT_JSON', '').strip()
+    credentials_file = getattr(settings, 'GOOGLE_PLAY_SERVICE_ACCOUNT_FILE', '').strip()
+    if credentials_json and credentials_file:
+        raise ImproperlyConfigured(
+            'Configure only one of GOOGLE_PLAY_SERVICE_ACCOUNT_JSON or '
+            'GOOGLE_PLAY_SERVICE_ACCOUNT_FILE'
+        )
+
     if credentials_json:
         try:
-            credentials = service_account.Credentials.from_service_account_info(json.loads(credentials_json), scopes=scopes)
+            service_account_info = json.loads(credentials_json)
+            if not isinstance(service_account_info, dict):
+                raise ValueError('Service-account JSON must contain an object')
+            credentials = service_account.Credentials.from_service_account_info(
+                service_account_info,
+                scopes=scopes,
+            )
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             raise ImproperlyConfigured('GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is invalid') from exc
     elif credentials_file:
-        credentials = service_account.Credentials.from_service_account_file(credentials_file, scopes=scopes)
+        credential_path = Path(credentials_file)
+        if not credential_path.is_file():
+            raise ImproperlyConfigured(
+                'GOOGLE_PLAY_SERVICE_ACCOUNT_FILE does not point to a readable file'
+            )
+        try:
+            credentials = service_account.Credentials.from_service_account_file(
+                str(credential_path),
+                scopes=scopes,
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            raise ImproperlyConfigured(
+                'GOOGLE_PLAY_SERVICE_ACCOUNT_FILE contains invalid credentials'
+            ) from exc
     else:
         raise ImproperlyConfigured('Google Play service-account credentials are not configured')
     return build('androidpublisher', 'v3', credentials=credentials, cache_discovery=False)

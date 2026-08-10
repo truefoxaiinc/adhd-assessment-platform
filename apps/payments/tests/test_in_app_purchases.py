@@ -2,11 +2,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.test import override_settings
+from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.payments.models import EntitlementStatus, StorePlatform, StorePurchase, SubscriptionEntitlement
-from apps.payments.services import save_verified_purchase, verify_google_purchase
+from apps.payments.services import _google_service, save_verified_purchase, verify_google_purchase
 from apps.users.models import Users
 
 
@@ -120,6 +121,41 @@ def test_google_purchase_is_verified_with_subscriptions_v2(user):
     assert result['expires_at'].year == 2099
 
 
+@override_settings(
+    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON='{"type":"service_account"}',
+    GOOGLE_PLAY_SERVICE_ACCOUNT_FILE='C:/secrets/google-play.json',
+)
+def test_google_credentials_reject_ambiguous_configuration():
+    with pytest.raises(ImproperlyConfigured) as exc_info:
+        _google_service()
+
+    assert 'only one' in str(exc_info.value)
+
+
+@override_settings(
+    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON='',
+    GOOGLE_PLAY_SERVICE_ACCOUNT_FILE='C:/missing/google-play.json',
+)
+def test_google_credentials_report_missing_file_without_exposing_path():
+    with pytest.raises(ImproperlyConfigured) as exc_info:
+        _google_service()
+
+    message = str(exc_info.value)
+    assert 'readable file' in message
+    assert 'C:/missing' not in message
+
+
+@override_settings(
+    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON='not-json',
+    GOOGLE_PLAY_SERVICE_ACCOUNT_FILE='',
+)
+def test_google_credentials_report_invalid_json_safely():
+    with pytest.raises(ImproperlyConfigured) as exc_info:
+        _google_service()
+
+    assert str(exc_info.value) == 'GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is invalid'
+
+
 @pytest.mark.django_db
 def test_expired_entitlement_is_not_verified(authed_client, user):
     purchase = StorePurchase.objects.create(
@@ -140,4 +176,3 @@ def test_expired_entitlement_is_not_verified(authed_client, user):
     assert response.status_code == 200
     assert response.data['data']['verified'] is False
     assert response.data['data']['subscription_status'] == 'expired'
-
