@@ -1,4 +1,5 @@
 from apps.progresstracker.models import UserAssessmentDetails, ProgressTracker
+from apps.payments.selectors import user_has_active_subscription
 from datetime import datetime, time as datetime_time, timedelta
 from django.utils import timezone
 
@@ -32,6 +33,9 @@ class ProgressTrackerActions:
                     )
                     if timezone.now() >= next_unlock_time:
                         unlocked_until += 1
+                # Day 1 is free; later course days require a current store entitlement.
+                if unlocked_until > 1 and not user_has_active_subscription(user_instance):
+                    return [1]
                 return list(range(1, unlocked_until + 1))
             return [1]
             

@@ -4,7 +4,14 @@ from rest_framework.test import APIClient
 from apps.users.models import Users
 from django.core.files.uploadedfile import SimpleUploadedFile
 from apps.filehandler.models import AdhdContent
-from apps.progresstracker.models import ProgressTracker
+from apps.payments.models import (
+    EntitlementStatus,
+    StorePlatform,
+    StorePurchase,
+    SubscriptionEntitlement,
+)
+from apps.progresstracker.models import ProgressTracker, UserAssessmentDetails
+from django.utils import timezone
 
 @pytest.fixture
 def api_client():
@@ -175,6 +182,120 @@ class TestFileHandlerViews:
         response = api_client.post(
             self.UPDATE_PROGRESS_URL,
             {'file_id': locked_content.id},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['errors']['file_id'] == 'Lesson/file is locked for this user.'
+
+    def test_day_two_stays_locked_without_active_subscription(self, api_client, user):
+        day_two_content = AdhdContent.objects.create(
+            title='Adult Day 2 Video',
+            file='adhd_content/adult-day-2-video.mp4',
+            is_management=True,
+            age_group='adult',
+            day=2,
+            file_type='video',
+            order_number=1,
+        )
+        UserAssessmentDetails.objects.create(
+            user=user,
+            last_completed=1,
+            last_completed_at=timezone.now() - timezone.timedelta(days=1),
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.UPDATE_PROGRESS_URL,
+            {'file_id': day_two_content.id},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['errors']['file_id'] == 'Lesson/file is locked for this user.'
+
+    def test_day_two_unlocks_with_active_subscription_and_completed_day_one(self, api_client, user):
+        day_two_content = AdhdContent.objects.create(
+            title='Adult Day 2 Video',
+            file='adhd_content/adult-day-2-video.mp4',
+            is_management=True,
+            age_group='adult',
+            day=2,
+            file_type='video',
+            order_number=1,
+        )
+        UserAssessmentDetails.objects.create(
+            user=user,
+            last_completed=1,
+            last_completed_at=timezone.now() - timezone.timedelta(days=1),
+        )
+        purchase = StorePurchase.objects.create(
+            user=user,
+            platform=StorePlatform.ANDROID,
+            product_id='attentionminder.monthly',
+            store_purchase_id='active-day-two-token',
+            status=EntitlementStatus.ACTIVE,
+            expires_at=timezone.now() + timezone.timedelta(days=30),
+        )
+        SubscriptionEntitlement.objects.create(
+            user=user,
+            platform=StorePlatform.ANDROID,
+            product_id=purchase.product_id,
+            status=EntitlementStatus.ACTIVE,
+            expires_at=purchase.expires_at,
+            source_purchase=purchase,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.UPDATE_PROGRESS_URL,
+            {'file_id': day_two_content.id},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert ProgressTracker.objects.filter(
+            user=user,
+            day_number=2,
+            file_type='video',
+        ).exists()
+
+    def test_day_two_stays_locked_after_subscription_expires(self, api_client, user):
+        day_two_content = AdhdContent.objects.create(
+            title='Adult Day 2 Video',
+            file='adhd_content/adult-day-2-video.mp4',
+            is_management=True,
+            age_group='adult',
+            day=2,
+            file_type='video',
+            order_number=1,
+        )
+        UserAssessmentDetails.objects.create(
+            user=user,
+            last_completed=1,
+            last_completed_at=timezone.now() - timezone.timedelta(days=1),
+        )
+        purchase = StorePurchase.objects.create(
+            user=user,
+            platform=StorePlatform.ANDROID,
+            product_id='attentionminder.monthly',
+            store_purchase_id='expired-day-two-token',
+            status=EntitlementStatus.EXPIRED,
+            expires_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+        SubscriptionEntitlement.objects.create(
+            user=user,
+            platform=StorePlatform.ANDROID,
+            product_id=purchase.product_id,
+            status=EntitlementStatus.EXPIRED,
+            expires_at=purchase.expires_at,
+            source_purchase=purchase,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.UPDATE_PROGRESS_URL,
+            {'file_id': day_two_content.id},
             format='json',
         )
 
