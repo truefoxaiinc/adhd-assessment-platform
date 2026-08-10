@@ -1,6 +1,7 @@
 from project_adhd.settings.base import *  # noqa: F401,F403
 
 DEBUG = False
+FIREBASE_INITIALIZE = False
 if config('USE_SQLITE_FOR_TESTS', default=False, cast=bool):
     DATABASES = {
         'default': {

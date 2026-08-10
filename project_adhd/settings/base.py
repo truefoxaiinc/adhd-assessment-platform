@@ -142,6 +142,7 @@ LOCAL_APPS = [
     'apps.progresstracker',
     'apps.articles',
     'apps.payments',
+    'apps.notifications',
 ]
 
 
@@ -514,18 +515,8 @@ STORE_ALLOWED_PRODUCT_IDS = [
 
 
 
-import firebase_admin
-from firebase_admin import credentials
 FIREBASE_INITIALIZE = config('FIREBASE_INITIALIZE', default=DJANGO_ENV != 'test', cast=bool)
-if FIREBASE_INITIALIZE and not firebase_admin._apps:
-    firebase_credentials_path = config(
-        'FIREBASE_CREDENTIALS_PATH',
-        default='files/attentionminder-3f4d6-firebase-adminsdk-fbsvc-704503bc6e.json',
-    )
-    if not Path(firebase_credentials_path).is_file():
-        raise ImproperlyConfigured('FIREBASE_CREDENTIALS_PATH does not point to a readable file')
-    cred = credentials.Certificate(firebase_credentials_path)
-    firebase_admin.initialize_app(cred)
+FIREBASE_CREDENTIALS_PATH = config('FIREBASE_CREDENTIALS_PATH', default='')
 
 # Celery Configuration Options
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://127.0.0.1:6379/2')

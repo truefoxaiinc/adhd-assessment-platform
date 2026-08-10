@@ -211,6 +211,30 @@ Account deactivation and soft deletion
 Goal flags such as is_first and is_last
 ```
 
+### Push Notifications
+
+Flutter registers each installation after login and whenever FCM refreshes the token:
+
+```text
+POST   /api/notifications/v1/devices/register/
+DELETE /api/notifications/v1/devices/unregister/
+```
+
+Register request:
+
+```json
+{
+  "token": "fcm-token-from-device",
+  "platform": "android",
+  "device_id": "installation-specific-id"
+}
+```
+
+The authenticated JWT user owns the device registration; the client does not send `user_id`.
+The backend can call `apps.notifications.services.notify_user()` from trusted events. Invalid
+or unregistered FCM tokens are disabled automatically. Do not expose a public endpoint that
+accepts arbitrary notification recipients or message content.
+
 Social login request:
 
 ```json
