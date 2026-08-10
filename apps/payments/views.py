@@ -1,4 +1,5 @@
 import hmac
+import logging
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -26,6 +27,24 @@ from helpers.exceptions.exceptions import safe_exception_response
 from helpers.response import ResponseInfo
 
 
+logger = logging.getLogger(__name__)
+
+
+def _purchase_log_context(request, data):
+    """Return useful purchase diagnostics without exposing store credentials."""
+    token = data.get('purchase_token') or data.get('verification_data') or ''
+    return {
+        'user_id': getattr(request.user, 'pk', None),
+        'platform': data.get('platform'),
+        'product_id': data.get('product_id'),
+        'purchase_id': data.get('purchase_id'),
+        'transaction_id': data.get('transaction_id'),
+        'has_verification_data': bool(token),
+        'verification_data_length': len(token) if isinstance(token, str) else None,
+        'request_fields': sorted(data.keys()),
+    }
+
+
 def _error(message, http_status, errors=None):
     response = ResponseInfo(status=False, status_code=http_status, message=message).response
     if errors:
@@ -40,6 +59,11 @@ class VerifyInAppPurchaseApiView(APIView):
     def post(self, request):
         serializer = InAppPurchaseVerificationSerializer(data=request.data)
         if not serializer.is_valid():
+            logger.warning(
+                'In-app purchase request validation failed: context=%s errors=%s',
+                _purchase_log_context(request, request.data),
+                serializer.errors,
+            )
             return _error('Invalid purchase verification request', status.HTTP_400_BAD_REQUEST, serializer.errors)
         try:
             entitlement = verify_in_app_purchase(request.user, serializer.validated_data)
@@ -47,8 +71,18 @@ class VerifyInAppPurchaseApiView(APIView):
             response['data'] = EntitlementSerializer(entitlement).data
             return Response(response, status=status.HTTP_200_OK)
         except ValidationError as exc:
+            logger.warning(
+                'In-app purchase store verification failed: context=%s errors=%s',
+                _purchase_log_context(request, serializer.validated_data),
+                exc.detail,
+            )
             return _error('Purchase verification failed', status.HTTP_400_BAD_REQUEST, exc.detail)
         except ImproperlyConfigured as exc:
+            logger.error(
+                'In-app purchase service is not configured: context=%s error=%s',
+                _purchase_log_context(request, serializer.validated_data),
+                exc,
+            )
             return _error(str(exc), status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:
             return safe_exception_response(exc, context={'view': self})

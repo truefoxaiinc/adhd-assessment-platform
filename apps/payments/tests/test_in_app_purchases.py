@@ -54,6 +54,25 @@ def test_verification_endpoint_requires_authentication(client):
 
 
 @pytest.mark.django_db
+def test_invalid_verification_request_logs_safe_context(authed_client, user, caplog):
+    response = authed_client.post(
+        '/api/payments/v1/payments/verify-in-app-purchase/',
+        {
+            'platform': 'android',
+            'product_id': 'attentionminder.monthly',
+            'purchase_token': 'secret-purchase-token',
+            'is_restore': 'not-a-boolean',
+        },
+        format='json',
+    )
+
+    assert response.status_code == 400
+    assert 'In-app purchase request validation failed' in caplog.text
+    assert f"'user_id': {user.pk}" in caplog.text
+    assert 'secret-purchase-token' not in caplog.text
+
+
+@pytest.mark.django_db
 def test_android_verification_returns_entitlement(authed_client, user):
     with patch(
         'apps.payments.views.verify_in_app_purchase',
