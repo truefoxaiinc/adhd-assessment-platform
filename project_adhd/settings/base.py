@@ -489,20 +489,29 @@ EMAIL_USE_TLS         = True
 DEFAULT_FROM_EMAIL    = config('DEFAULT_FROM_EMAIL', default='truefoxaiinc.official@gmail.com')
 PASSWORD_RESET_EMAIL_ASYNC = config('PASSWORD_RESET_EMAIL_ASYNC', default=False, cast=bool)
 
-STRIPE_SECRET_KEY = get_secret_config('STRIPE_SECRET_KEY', default='')
-STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='')
-STRIPE_WEBHOOK_SECRET = get_secret_config('STRIPE_WEBHOOK_SECRET', default='')
-STRIPE_MONTHLY_PRICE_ID = config('STRIPE_MONTHLY_PRICE_ID', default='')
-STRIPE_SUCCESS_URL = config('STRIPE_SUCCESS_URL', default='')
-STRIPE_CANCEL_URL = config('STRIPE_CANCEL_URL', default='')
-STRIPE_BILLING_PORTAL_RETURN_URL = config('STRIPE_BILLING_PORTAL_RETURN_URL', default='')
-PAYMENT_APP_SUCCESS_URL = config('PAYMENT_APP_SUCCESS_URL', default='attentionminder://payments/success')
-PAYMENT_APP_CANCEL_URL = config('PAYMENT_APP_CANCEL_URL', default='attentionminder://payments/cancel')
-STRIPE_ALLOWED_REDIRECT_HOSTS = [
-    host.strip()
-    for host in config('STRIPE_ALLOWED_REDIRECT_HOSTS', default='').split(',')
-    if host.strip()
+# Native Google Play / App Store subscriptions.
+GOOGLE_PLAY_PACKAGE_NAME = config('GOOGLE_PLAY_PACKAGE_NAME', default='com.trufox.attentionminder')
+GOOGLE_PLAY_SERVICE_ACCOUNT_FILE = config('GOOGLE_PLAY_SERVICE_ACCOUNT_FILE', default='')
+GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = config('GOOGLE_PLAY_SERVICE_ACCOUNT_JSON', default='')
+GOOGLE_RTDN_VERIFICATION_TOKEN = config('GOOGLE_RTDN_VERIFICATION_TOKEN', default='')
+APPLE_BUNDLE_ID = config('APPLE_BUNDLE_ID', default='attentionminder.trufoxai.com')
+APPLE_APP_ID = config('APPLE_APP_ID', default='')
+APPLE_IAP_PRIVATE_KEY_FILE = config('APPLE_IAP_PRIVATE_KEY_FILE', default='')
+APPLE_IAP_KEY_ID = config('APPLE_IAP_KEY_ID', default='')
+APPLE_IAP_ISSUER_ID = config('APPLE_IAP_ISSUER_ID', default='')
+APPLE_APP_ACCOUNT_TOKEN_NAMESPACE = config('APPLE_APP_ACCOUNT_TOKEN_NAMESPACE', default='')
+APPLE_ROOT_CERTIFICATE_FILES = [
+    path.strip()
+    for path in config('APPLE_ROOT_CERTIFICATE_FILES', default='').split(',')
+    if path.strip()
 ]
+STORE_REQUIRE_ACCOUNT_ASSOCIATION = config('STORE_REQUIRE_ACCOUNT_ASSOCIATION', default=False, cast=bool)
+STORE_ALLOWED_PRODUCT_IDS = [
+    product_id.strip()
+    for product_id in config('STORE_ALLOWED_PRODUCT_IDS', default='attentionminder.monthly').split(',')
+    if product_id.strip()
+]
+
 
 
 import firebase_admin

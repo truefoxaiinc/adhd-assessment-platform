@@ -25,7 +25,6 @@ from django.conf import settings
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
-from apps.payments import views as payment_views
 
 
 admin.site.site_header = "ADHD Minder Admin"
@@ -51,8 +50,6 @@ urlpatterns = [
     path('account-deletion/', TemplateView.as_view(template_name='account_deletion.html'), name='account-deletion'),
     path('delete-account/', TemplateView.as_view(template_name='account_deletion.html'), name='delete-account-page'),
     path('attention-minder-support/', TemplateView.as_view(template_name='attention_minder_support.html'), name='attention-minder-support'),
-    path('payment/success/', payment_views.payment_success_page, name='payment-success'),
-    path('payment/cancel/', payment_views.payment_cancel_page, name='payment-cancel'),
 
     re_path(r'^api/', include([
         path('auth/',include('apps.authentication.urls')),

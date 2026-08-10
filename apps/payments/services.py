@@ -1,303 +1,369 @@
-import logging
+import base64
+import hashlib
+import hmac
+import json
 from datetime import datetime, timezone as datetime_timezone
-from urllib.parse import urlparse
+from pathlib import Path
 
-import stripe
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
 
 from apps.payments.models import (
-    PaymentInvoice,
-    StripeCustomer,
-    StripeWebhookEvent,
-    Subscription,
-    SubscriptionStatus,
+    EntitlementStatus,
+    StoreNotificationEvent,
+    StorePlatform,
+    StorePurchase,
+    SubscriptionEntitlement,
 )
 
-logger = logging.getLogger(__name__)
 
-
-SUPPORTED_WEBHOOK_EVENTS = {
-    'checkout.session.completed',
-    'customer.subscription.created',
-    'customer.subscription.updated',
-    'customer.subscription.deleted',
-    'invoice.payment_succeeded',
-    'invoice.payment_failed',
+GOOGLE_ACTIVE_STATES = {
+    'SUBSCRIPTION_STATE_ACTIVE',
+    'SUBSCRIPTION_STATE_IN_GRACE_PERIOD',
 }
 
 
-def _stripe():
-    if not settings.STRIPE_SECRET_KEY:
-        raise ImproperlyConfigured('STRIPE_SECRET_KEY is not configured')
-    stripe.api_key = settings.STRIPE_SECRET_KEY
-    return stripe
+def _validate_product_id(product_id):
+    allowed = set(getattr(settings, 'STORE_ALLOWED_PRODUCT_IDS', []))
+    if not allowed:
+        raise ImproperlyConfigured('STORE_ALLOWED_PRODUCT_IDS is not configured')
+    if product_id not in allowed:
+        raise ValidationError({'product_id': 'This subscription product is not supported.'})
 
 
-def _timestamp_to_datetime(value):
-    if not value:
+def _dt(value):
+    if value is None:
         return None
-    return datetime.fromtimestamp(value, tz=datetime_timezone.utc)
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=datetime_timezone.utc)
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value / 1000, tz=datetime_timezone.utc)
+    parsed = parse_datetime(str(value))
+    return parsed if parsed and parsed.tzinfo else (parsed.replace(tzinfo=datetime_timezone.utc) if parsed else None)
 
 
-def _get_value(obj, key, default=None):
+def _value(obj, name, default=None):
     if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+        return obj.get(name, default)
+    return getattr(obj, name, default)
 
 
-def _to_plain_dict(obj):
-    if hasattr(obj, 'to_dict_recursive'):
-        return obj.to_dict_recursive()
-    if isinstance(obj, dict):
-        return {
-            key: _to_plain_dict(value)
-            for key, value in obj.items()
-        }
-    if isinstance(obj, list):
-        return [_to_plain_dict(value) for value in obj]
-    return obj
+def _expected_account_id(user):
+    digest = hmac.new(
+        settings.SECRET_KEY.encode(),
+        f'in-app-purchase:{user.pk}'.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return digest
 
 
-def _validate_redirect_url(url, fallback):
-    candidate = (url or fallback or '').strip()
-    if not candidate:
-        raise ValidationError({'redirect_url': 'Redirect URL is not configured'})
+def purchase_account_identifiers(user):
+    import uuid
 
-    parsed = urlparse(candidate)
-    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
-        raise ValidationError({'redirect_url': 'Redirect URL must be absolute'})
+    namespace = getattr(settings, 'APPLE_APP_ACCOUNT_TOKEN_NAMESPACE', '')
+    if namespace:
+        apple_token = str(uuid.uuid5(uuid.UUID(namespace), str(user.pk)))
+    else:
+        apple_token = str(uuid.uuid5(uuid.NAMESPACE_URL, f'{settings.APPLE_BUNDLE_ID}:{user.pk}'))
+    return {
+        'google_obfuscated_account_id': _expected_account_id(user),
+        'apple_app_account_token': apple_token,
+    }
 
-    allowed_hosts = set(getattr(settings, 'STRIPE_ALLOWED_REDIRECT_HOSTS', []))
-    if allowed_hosts and parsed.netloc not in allowed_hosts:
-        raise ValidationError({'redirect_url': 'Redirect URL host is not allowed'})
-    return candidate
+
+def _google_service():
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    scopes = ['https://www.googleapis.com/auth/androidpublisher']
+    credentials_json = getattr(settings, 'GOOGLE_PLAY_SERVICE_ACCOUNT_JSON', '')
+    credentials_file = getattr(settings, 'GOOGLE_PLAY_SERVICE_ACCOUNT_FILE', '')
+    if credentials_json:
+        try:
+            credentials = service_account.Credentials.from_service_account_info(json.loads(credentials_json), scopes=scopes)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise ImproperlyConfigured('GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is invalid') from exc
+    elif credentials_file:
+        credentials = service_account.Credentials.from_service_account_file(credentials_file, scopes=scopes)
+    else:
+        raise ImproperlyConfigured('Google Play service-account credentials are not configured')
+    return build('androidpublisher', 'v3', credentials=credentials, cache_discovery=False)
 
 
-def get_or_create_stripe_customer(user):
-    existing = StripeCustomer.objects.filter(user=user).first()
-    if existing:
-        return existing
+def verify_google_purchase(user, attrs, allow_inactive=False):
+    package_name = settings.GOOGLE_PLAY_PACKAGE_NAME
+    if not package_name:
+        raise ImproperlyConfigured('GOOGLE_PLAY_PACKAGE_NAME is not configured')
+    token = attrs['purchase_token']
+    service = _google_service()
+    try:
+        payload = service.purchases().subscriptionsv2().get(
+            packageName=package_name,
+            token=token,
+        ).execute()
+    except Exception as exc:
+        raise ValidationError({'verification_data': 'Google Play could not verify this purchase.'}) from exc
 
-    client = _stripe()
-    customer = client.Customer.create(
-        email=user.email,
-        name=user.username or user.email,
-        metadata={
-            'user_id': str(user.id),
-            'environment': settings.DJANGO_ENV,
-        },
+    line_items = payload.get('lineItems') or []
+    matching = [item for item in line_items if item.get('productId') == attrs['product_id']]
+    if not matching:
+        raise ValidationError({'product_id': 'Product does not match the Google Play purchase.'})
+    expiry = max((_dt(item.get('expiryTime')) for item in matching), default=None)
+    state = payload.get('subscriptionState', '')
+    is_active = state in GOOGLE_ACTIVE_STATES and bool(expiry and expiry > timezone.now())
+    if not allow_inactive and not is_active:
+        raise ValidationError({'verification_data': 'Google Play subscription is not active.'})
+
+    status_by_state = {
+        'SUBSCRIPTION_STATE_IN_GRACE_PERIOD': EntitlementStatus.GRACE_PERIOD,
+        'SUBSCRIPTION_STATE_PAUSED': EntitlementStatus.PAUSED,
+        'SUBSCRIPTION_STATE_CANCELED': EntitlementStatus.CANCELED,
+        'SUBSCRIPTION_STATE_EXPIRED': EntitlementStatus.EXPIRED,
+        'SUBSCRIPTION_STATE_PENDING': EntitlementStatus.PENDING,
+    }
+
+    external_ids = payload.get('externalAccountIdentifiers') or {}
+    linked_account = external_ids.get('obfuscatedExternalAccountId')
+    if linked_account and not hmac.compare_digest(linked_account, _expected_account_id(user)):
+        raise ValidationError({'verification_data': 'Google Play purchase belongs to another account.'})
+    if getattr(settings, 'STORE_REQUIRE_ACCOUNT_ASSOCIATION', False) and not linked_account:
+        raise ValidationError({'verification_data': 'Google Play purchase has no application account association.'})
+
+    return {
+        'platform': StorePlatform.ANDROID,
+        'store_purchase_id': token,
+        'original_transaction_id': payload.get('linkedPurchaseToken') or token,
+        'latest_transaction_id': payload.get('latestOrderId') or attrs.get('purchase_id', ''),
+        'product_id': attrs['product_id'],
+        'environment': 'test' if payload.get('testPurchase') is not None else 'production',
+        'status': status_by_state.get(state, EntitlementStatus.ACTIVE if is_active else EntitlementStatus.EXPIRED),
+        'purchased_at': _dt(payload.get('startTime')),
+        'expires_at': expiry,
+        'auto_renewing': any(bool(item.get('autoRenewingPlan', {}).get('autoRenewEnabled')) for item in matching),
+        'raw_verification_response': payload,
+    }
+
+
+def _apple_root_certificates():
+    paths = getattr(settings, 'APPLE_ROOT_CERTIFICATE_FILES', [])
+    if not paths:
+        raise ImproperlyConfigured('APPLE_ROOT_CERTIFICATE_FILES is not configured')
+    return [Path(path).read_bytes() for path in paths]
+
+
+def _apple_verifier(environment):
+    from appstoreserverlibrary.models.Environment import Environment
+    from appstoreserverlibrary.signed_data_verifier import SignedDataVerifier
+
+    env = Environment.PRODUCTION if environment == 'production' else Environment.SANDBOX
+    app_id = getattr(settings, 'APPLE_APP_ID', None) if environment == 'production' else None
+    return SignedDataVerifier(
+        _apple_root_certificates(),
+        True,
+        env,
+        settings.APPLE_BUNDLE_ID,
+        int(app_id) if app_id else None,
     )
-    return StripeCustomer.objects.create(user=user, stripe_customer_id=customer.id)
 
 
-def create_checkout_session(user, success_url=None, cancel_url=None):
-    if not settings.STRIPE_MONTHLY_PRICE_ID:
-        raise ImproperlyConfigured('STRIPE_MONTHLY_PRICE_ID is not configured')
+def _verify_apple_jws(signed_transaction):
+    from appstoreserverlibrary.signed_data_verifier import VerificationException
 
-    success_url = _validate_redirect_url(success_url, settings.STRIPE_SUCCESS_URL)
-    cancel_url = _validate_redirect_url(cancel_url, settings.STRIPE_CANCEL_URL)
-    customer = get_or_create_stripe_customer(user)
-    client = _stripe()
+    errors = []
+    for environment in ('production', 'sandbox'):
+        try:
+            return _apple_verifier(environment).verify_and_decode_signed_transaction(signed_transaction), environment
+        except VerificationException as exc:
+            errors.append(exc)
+    raise ValidationError({'verification_data': 'Apple could not verify this signed transaction.'}) from errors[-1]
 
-    session = client.checkout.Session.create(
-        mode='subscription',
-        customer=customer.stripe_customer_id,
-        line_items=[{'price': settings.STRIPE_MONTHLY_PRICE_ID, 'quantity': 1}],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        client_reference_id=str(user.id),
-        metadata={
-            'user_id': str(user.id),
-            'email': user.email or '',
-            'environment': settings.DJANGO_ENV,
-        },
-        subscription_data={
-            'metadata': {
-                'user_id': str(user.id),
-                'email': user.email or '',
-                'environment': settings.DJANGO_ENV,
-            },
-        },
+
+def _apple_api_signed_transaction(transaction_id, environment):
+    from appstoreserverlibrary.api_client import AppStoreServerAPIClient, APIException
+    from appstoreserverlibrary.models.Environment import Environment
+
+    private_key_file = getattr(settings, 'APPLE_IAP_PRIVATE_KEY_FILE', '')
+    if not all([private_key_file, settings.APPLE_IAP_KEY_ID, settings.APPLE_IAP_ISSUER_ID]):
+        raise ImproperlyConfigured('Apple App Store Server API credentials are not configured')
+    env = Environment.PRODUCTION if environment == 'production' else Environment.SANDBOX
+    client = AppStoreServerAPIClient(
+        Path(private_key_file).read_bytes(),
+        settings.APPLE_IAP_KEY_ID,
+        settings.APPLE_IAP_ISSUER_ID,
+        settings.APPLE_BUNDLE_ID,
+        env,
     )
-    return {'checkout_url': session.url, 'session_id': session.id}
-
-
-def create_billing_portal_session(user, return_url=None):
-    return_url = _validate_redirect_url(return_url, settings.STRIPE_BILLING_PORTAL_RETURN_URL)
-    customer = get_or_create_stripe_customer(user)
-    client = _stripe()
-    session = client.billing_portal.Session.create(
-        customer=customer.stripe_customer_id,
-        return_url=return_url,
-    )
-    return {'portal_url': session.url}
-
-
-def construct_webhook_event(payload, signature):
-    if not settings.STRIPE_WEBHOOK_SECRET:
-        raise ImproperlyConfigured('STRIPE_WEBHOOK_SECRET is not configured')
-    return _stripe().Webhook.construct_event(payload, signature, settings.STRIPE_WEBHOOK_SECRET)
-
-
-def _find_user_from_customer_or_metadata(stripe_customer_id=None, metadata=None):
-    user_id = (metadata or {}).get('user_id')
-    User = get_user_model()
-    if user_id:
-        user = User.objects.filter(id=user_id).first()
-        if user:
-            return user
-
-    if stripe_customer_id:
-        customer = StripeCustomer.objects.select_related('user').filter(stripe_customer_id=stripe_customer_id).first()
-        if customer:
-            return customer.user
-    return None
-
-
-def _subscription_price_id(subscription):
-    items = _get_value(subscription, 'items')
-    data = _get_value(items, 'data', []) if items else []
-    if not data:
-        return ''
-    price = _get_value(data[0], 'price', {})
-    return _get_value(price, 'id', '') or ''
-
-
-def _upsert_subscription(subscription, fallback_user=None):
-    stripe_customer_id = _get_value(subscription, 'customer')
-    stripe_subscription_id = _get_value(subscription, 'id')
-    if not stripe_subscription_id:
-        logger.warning('Stripe subscription event missing subscription id')
+    try:
+        return client.get_transaction_info(transaction_id).signedTransactionInfo
+    except APIException:
         return None
 
-    user = fallback_user or _find_user_from_customer_or_metadata(
-        stripe_customer_id=stripe_customer_id,
-        metadata=_get_value(subscription, 'metadata', {}),
-    )
-    if not user:
-        logger.warning('Unable to map Stripe subscription to user', extra={'stripe_subscription_id': stripe_subscription_id})
-        return None
 
-    status = _get_value(subscription, 'status') or SubscriptionStatus.INCOMPLETE
-    if status not in SubscriptionStatus.values:
-        logger.warning('Unknown Stripe subscription status', extra={'status': status})
+def verify_apple_purchase(user, attrs, allow_inactive=False):
+    if not settings.APPLE_BUNDLE_ID:
+        raise ImproperlyConfigured('APPLE_BUNDLE_ID is not configured')
+    signed_transaction = attrs.get('verification_data', '')
+    # Flutter may provide a legacy base64 app receipt here. The modern Apple
+    # verifier expects a compact JWS; use the transaction ID API for receipts.
+    if signed_transaction.count('.') != 2:
+        signed_transaction = ''
+    if not signed_transaction:
+        for environment in ('production', 'sandbox'):
+            signed_transaction = _apple_api_signed_transaction(attrs['transaction_id'], environment)
+            if signed_transaction:
+                break
+        if not signed_transaction:
+            raise ValidationError({'transaction_id': 'Apple could not find this transaction.'})
+    decoded, environment = _verify_apple_jws(signed_transaction)
 
-    subscription_record, _ = Subscription.objects.update_or_create(
-        user=user,
-        defaults={
-            'stripe_customer_id': stripe_customer_id or '',
-            'stripe_subscription_id': stripe_subscription_id,
-            'stripe_price_id': _subscription_price_id(subscription),
-            'status': status,
-            'current_period_start': _timestamp_to_datetime(_get_value(subscription, 'current_period_start')),
-            'current_period_end': _timestamp_to_datetime(_get_value(subscription, 'current_period_end')),
-            'cancel_at_period_end': bool(_get_value(subscription, 'cancel_at_period_end', False)),
-            'canceled_at': _timestamp_to_datetime(_get_value(subscription, 'canceled_at')),
+    product_id = _value(decoded, 'productId')
+    if product_id != attrs['product_id']:
+        raise ValidationError({'product_id': 'Product does not match the Apple transaction.'})
+    bundle_id = _value(decoded, 'bundleId')
+    if bundle_id and bundle_id != settings.APPLE_BUNDLE_ID:
+        raise ValidationError({'verification_data': 'Apple transaction bundle ID does not match.'})
+    expires_at = _dt(_value(decoded, 'expiresDate'))
+    revocation_date = _dt(_value(decoded, 'revocationDate'))
+    if revocation_date and not allow_inactive:
+        raise ValidationError({'verification_data': 'Apple transaction was revoked.'})
+    if (not expires_at or expires_at <= timezone.now()) and not allow_inactive:
+        raise ValidationError({'verification_data': 'Apple subscription is expired.'})
+
+    app_account_token = str(_value(decoded, 'appAccountToken') or '')
+    import uuid
+
+    configured_namespace = getattr(settings, 'APPLE_APP_ACCOUNT_TOKEN_NAMESPACE', '')
+    if configured_namespace:
+        expected_account = str(uuid.uuid5(uuid.UUID(configured_namespace), str(user.pk)))
+    else:
+        expected_account = str(uuid.uuid5(uuid.NAMESPACE_URL, f'{settings.APPLE_BUNDLE_ID}:{user.pk}'))
+    if app_account_token and app_account_token != expected_account:
+        raise ValidationError({'verification_data': 'Apple transaction belongs to another account.'})
+    if getattr(settings, 'STORE_REQUIRE_ACCOUNT_ASSOCIATION', False) and not app_account_token:
+        raise ValidationError({'verification_data': 'Apple transaction has no application account association.'})
+
+    transaction_id = str(_value(decoded, 'transactionId') or attrs.get('transaction_id') or '')
+    return {
+        'platform': StorePlatform.IOS,
+        'store_purchase_id': str(_value(decoded, 'originalTransactionId') or transaction_id),
+        'original_transaction_id': str(_value(decoded, 'originalTransactionId') or transaction_id),
+        'latest_transaction_id': transaction_id,
+        'product_id': product_id,
+        'environment': environment,
+        'status': (
+            EntitlementStatus.REVOKED if revocation_date
+            else EntitlementStatus.ACTIVE if expires_at and expires_at > timezone.now()
+            else EntitlementStatus.EXPIRED
+        ),
+        'purchased_at': _dt(_value(decoded, 'purchaseDate')),
+        'expires_at': expires_at,
+        'auto_renewing': True,
+        'raw_verification_response': {
+            'transaction_id': transaction_id,
+            'original_transaction_id': str(_value(decoded, 'originalTransactionId') or ''),
+            'product_id': product_id,
+            'environment': environment,
         },
-    )
-    return subscription_record
-
-
-def _handle_checkout_session_completed(session):
-    stripe_customer_id = _get_value(session, 'customer')
-    stripe_subscription_id = _get_value(session, 'subscription')
-    user = _find_user_from_customer_or_metadata(
-        stripe_customer_id=stripe_customer_id,
-        metadata=_get_value(session, 'metadata', {}),
-    )
-    if not user:
-        logger.warning('Unable to map checkout session to user', extra={'session_id': _get_value(session, 'id')})
-        return
-
-    StripeCustomer.objects.update_or_create(
-        user=user,
-        defaults={'stripe_customer_id': stripe_customer_id},
-    )
-
-    if stripe_subscription_id:
-        subscription = _stripe().Subscription.retrieve(stripe_subscription_id)
-        _upsert_subscription(subscription, fallback_user=user)
-
-
-def _handle_subscription_deleted(subscription):
-    record = _upsert_subscription(subscription)
-    if record and record.status != SubscriptionStatus.DELETED:
-        record.status = SubscriptionStatus.DELETED
-        record.canceled_at = record.canceled_at or timezone.now()
-        record.save(update_fields=['status', 'canceled_at', 'updated_at'])
-
-
-def _handle_invoice(invoice):
-    stripe_subscription_id = _get_value(invoice, 'subscription')
-    subscription = Subscription.objects.select_related('user').filter(
-        stripe_subscription_id=stripe_subscription_id,
-    ).first()
-    user = subscription.user if subscription else _find_user_from_customer_or_metadata(
-        stripe_customer_id=_get_value(invoice, 'customer'),
-    )
-    if not user:
-        logger.warning('Unable to map invoice to user', extra={'invoice_id': _get_value(invoice, 'id')})
-        return
-
-    PaymentInvoice.objects.update_or_create(
-        stripe_invoice_id=_get_value(invoice, 'id'),
-        defaults={
-            'user': user,
-            'stripe_subscription_id': stripe_subscription_id,
-            'amount_paid': _get_value(invoice, 'amount_paid', 0) or 0,
-            'currency': _get_value(invoice, 'currency', '') or '',
-            'status': _get_value(invoice, 'status', '') or '',
-            'hosted_invoice_url': _get_value(invoice, 'hosted_invoice_url'),
-            'invoice_pdf': _get_value(invoice, 'invoice_pdf'),
-            'paid_at': _timestamp_to_datetime(_get_value(_get_value(invoice, 'status_transitions', {}), 'paid_at')),
-        },
-    )
+    }
 
 
 @transaction.atomic
-def process_webhook_event(event):
-    event = _to_plain_dict(event)
-    event_type = _get_value(event, 'type')
-    stripe_event_id = _get_value(event, 'id')
-    if not stripe_event_id:
-        raise ValueError('Stripe event id is missing')
-    data_object = _get_value(_get_value(event, 'data', {}), 'object', {})
-
-    webhook_event, created = StripeWebhookEvent.objects.select_for_update().get_or_create(
-        stripe_event_id=stripe_event_id,
+def save_verified_purchase(user, verified, is_restore=False):
+    existing = StorePurchase.objects.select_for_update().filter(
+        platform=verified['platform'], store_purchase_id=verified['store_purchase_id']
+    ).first()
+    if existing and existing.user_id != user.pk:
+        raise ValidationError({'verification_data': 'This store purchase is already linked to another account.'})
+    purchase, _ = StorePurchase.objects.update_or_create(
+        platform=verified['platform'],
+        store_purchase_id=verified['store_purchase_id'],
+        defaults={**verified, 'user': user, 'is_restore': is_restore},
+    )
+    entitlement, _ = SubscriptionEntitlement.objects.update_or_create(
+        user=user,
         defaults={
-            'event_type': event_type,
-            'raw_payload': event,
+            'platform': purchase.platform,
+            'product_id': purchase.product_id,
+            'status': purchase.status,
+            'expires_at': purchase.expires_at,
+            'source_purchase': purchase,
         },
     )
-    if not created and webhook_event.processed:
-        logger.info('Duplicate Stripe webhook ignored', extra={'stripe_event_id': stripe_event_id})
-        return {'duplicate': True}
+    return entitlement
 
-    webhook_event.event_type = event_type
-    webhook_event.raw_payload = event
-    webhook_event.save(update_fields=['event_type', 'raw_payload'])
 
+def verify_in_app_purchase(user, attrs):
+    _validate_product_id(attrs['product_id'])
+    verified = verify_google_purchase(user, attrs) if attrs['platform'] == StorePlatform.ANDROID else verify_apple_purchase(user, attrs)
+    return save_verified_purchase(user, verified, attrs.get('is_restore', False))
+
+
+def decode_google_rtdn(payload):
+    message = payload['message']
     try:
-        if event_type not in SUPPORTED_WEBHOOK_EVENTS:
-            logger.info('Unsupported Stripe webhook ignored', extra={'event_type': event_type})
-        elif event_type == 'checkout.session.completed':
-            _handle_checkout_session_completed(data_object)
-        elif event_type in {'customer.subscription.created', 'customer.subscription.updated'}:
-            _upsert_subscription(data_object)
-        elif event_type == 'customer.subscription.deleted':
-            _handle_subscription_deleted(data_object)
-        elif event_type in {'invoice.payment_succeeded', 'invoice.payment_failed'}:
-            _handle_invoice(data_object)
-        webhook_event.mark_processed()
-    except Exception as exc:
-        logger.exception('Stripe webhook processing failed', extra={'stripe_event_id': stripe_event_id})
-        webhook_event.mark_failed(str(exc))
-        raise
+        data = json.loads(base64.b64decode(message['data']).decode())
+    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        raise ValidationError({'message': 'Invalid Google RTDN payload.'}) from exc
+    return message.get('messageId') or hashlib.sha256(message['data'].encode()).hexdigest(), data
 
-    return {'duplicate': False}
+
+@transaction.atomic
+def process_google_rtdn(payload):
+    event_id, data = decode_google_rtdn(payload)
+    event, created = StoreNotificationEvent.objects.select_for_update().get_or_create(
+        platform=StorePlatform.ANDROID, event_id=event_id,
+        defaults={'event_type': 'subscriptionNotification', 'raw_payload': payload},
+    )
+    if not created and event.processed:
+        return True
+    notification = data.get('subscriptionNotification') or {}
+    token = notification.get('purchaseToken')
+    purchase = StorePurchase.objects.select_related('user').filter(platform=StorePlatform.ANDROID, store_purchase_id=token).first()
+    if purchase:
+        attrs = {'platform': 'android', 'product_id': purchase.product_id, 'purchase_token': token}
+        save_verified_purchase(purchase.user, verify_google_purchase(purchase.user, attrs, allow_inactive=True))
+    event.processed = True
+    event.processed_at = timezone.now()
+    event.save(update_fields=['processed', 'processed_at'])
+    return False
+
+
+@transaction.atomic
+def process_apple_notification(signed_payload):
+    from appstoreserverlibrary.signed_data_verifier import VerificationException
+
+    decoded = None
+    environment = None
+    for candidate in ('production', 'sandbox'):
+        try:
+            decoded = _apple_verifier(candidate).verify_and_decode_notification(signed_payload)
+            environment = candidate
+            break
+        except VerificationException:
+            continue
+    if decoded is None:
+        raise ValidationError({'signedPayload': 'Invalid Apple notification signature.'})
+    event_id = str(_value(decoded, 'notificationUUID'))
+    event, created = StoreNotificationEvent.objects.select_for_update().get_or_create(
+        platform=StorePlatform.IOS, event_id=event_id,
+        defaults={'event_type': str(_value(decoded, 'notificationType') or ''), 'raw_payload': {'environment': environment}},
+    )
+    if not created and event.processed:
+        return True
+    data = _value(decoded, 'data')
+    signed_transaction = _value(data, 'signedTransactionInfo') if data else None
+    if signed_transaction:
+        transaction, _ = _verify_apple_jws(signed_transaction)
+        original_id = str(_value(transaction, 'originalTransactionId') or '')
+        purchase = StorePurchase.objects.select_related('user').filter(platform=StorePlatform.IOS, original_transaction_id=original_id).first()
+        if purchase:
+            attrs = {'platform': 'ios', 'product_id': _value(transaction, 'productId'), 'verification_data': signed_transaction}
+            save_verified_purchase(purchase.user, verify_apple_purchase(purchase.user, attrs, allow_inactive=True))
+    event.processed = True
+    event.processed_at = timezone.now()
+    event.save(update_fields=['processed', 'processed_at'])
+    return False

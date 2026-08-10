@@ -47,6 +47,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 import requests
 import logging
 from google.auth.transport import requests as google_requests
+from google.auth import exceptions as google_auth_exceptions
 from google.oauth2 import id_token as google_id_token
 
 logger = logging.getLogger(__name__)
@@ -439,10 +440,15 @@ class SocialLoginView(APIView):
         if not settings.GOOGLE_OAUTH_CLIENT_IDS:
             raise ValidationError({'provider': 'Google OAuth client id is not configured'})
 
-        payload = google_id_token.verify_oauth2_token(
-            token,
-            google_requests.Request(),
-        )
+        try:
+            # Audience is checked below so one backend can accept tokens issued
+            # to the configured web, Android, and iOS OAuth clients.
+            payload = google_id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+            )
+        except (ValueError, google_auth_exceptions.GoogleAuthError):
+            raise ValidationError({'id_token': 'Invalid or expired Google ID token'})
 
         if payload.get('iss') not in ['accounts.google.com', 'https://accounts.google.com']:
             raise ValidationError({'id_token': 'Invalid Google token issuer'})
@@ -453,7 +459,8 @@ class SocialLoginView(APIView):
         if not payload.get('email'):
             raise ValidationError({'id_token': 'No email in Google token'})
 
-        if not payload.get('email_verified'):
+        email_verified = payload.get('email_verified')
+        if email_verified not in (True, 'true'):
             raise ValidationError({'id_token': 'Google email is not verified'})
 
         provider_subject = payload.get('sub')

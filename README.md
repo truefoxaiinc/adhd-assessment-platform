@@ -1,6 +1,6 @@
 # ADHD-Minder Backend
 
-ADHD-Minder is a Django REST Framework backend for the Attention Minder mobile app. It handles authentication, user profile management, self-assessment questionnaires, learning progress, ADHD content delivery, frontend-submitted attention scores, management activity scores, articles, payments, cache-backed dashboards, and Google Play account deletion compliance.
+ADHD-Minder is a Django REST Framework backend for the Attention Minder mobile app. It handles authentication, user profile management, self-assessment questionnaires, learning progress, ADHD content delivery, frontend-submitted attention scores, management activity scores, articles, cache-backed dashboards, and Google Play account deletion compliance.
 
 The backend is intentionally API-first. Face and attention detection are performed in the frontend; the backend stores the final telemetry submitted by the app.
 
@@ -29,7 +29,6 @@ drf-yasg Swagger
 WhiteNoise
 django-cors-headers
 AWS S3 / django-storages
-Stripe
 Unfold admin
 Docker / Docker Compose
 ```
@@ -51,7 +50,6 @@ project_adhd.urls
         +-- /api/filehandler/       -> apps.filehandler
         +-- /api/progresstracker/   -> apps.progresstracker
         +-- /api/articles/          -> apps.articles
-        +-- /api/payments/          -> apps.payments
         +-- /api/docs/              -> Swagger
         +-- /attention-minder-support/ -> public App Store support page
         +-- /account-deletion/      -> public Google Play deletion page
@@ -63,7 +61,6 @@ Services / serializers / permissions
         +-- Redis for API response cache and Channels layer
         +-- S3 for media/file storage when configured
         +-- SMTP for password reset OTP email
-        +-- Stripe for subscription/payment features
 ```
 
 ## Project Structure
@@ -77,7 +74,6 @@ ADHD-Minder-backend/
     filehandler/       ADHD content catalog, feedback, progress update helpers
     progresstracker/   Course progress, goals, attention sessions, activity sessions
     articles/          Article list API and article cache invalidation
-    payments/          Stripe customer, checkout, billing portal, subscription, webhook
     websocket/         Channels routing for non-detection websocket features
   helpers/             Shared response format, auth helpers, exception handling
   services/            Business logic services such as assessment scoring
@@ -153,8 +149,6 @@ EMAIL_HOST_PASSWORD=your_email_app_password
 EMAIL_PORT=587
 DEFAULT_FROM_EMAIL=your_email
 
-STRIPE_SECRET_KEY=your_stripe_secret
-STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
 ```
 
 Production deployments must set required secrets explicitly. When `DJANGO_ENV=production`, missing values such as `SECRET_KEY`, `DATABASE_PASSWORD`, `JWT_SIGNING_KEY`, and `EMAIL_HOST_PASSWORD` fail fast during startup.
@@ -221,6 +215,25 @@ Social login request:
 
 ```json
 {
+  "provider": "google",
+  "id_token": "google_id_token_from_frontend"
+}
+```
+
+The client must send the Google ID token (JWT credential), not a Google access
+token or authorization code. The backend verifies its signature, expiry,
+issuer, audience, and verified email before issuing the application's JWT
+access and refresh tokens. Configure every accepted frontend client:
+
+```text
+GOOGLE_OAUTH_CLIENT_IDS=web-client.apps.googleusercontent.com,ios-client.apps.googleusercontent.com
+```
+
+Apple social login can additionally provide the name returned on first
+authorization:
+
+```json
+{
   "provider": "apple",
   "id_token": "apple_identity_token_from_frontend",
   "full_name": {
@@ -238,6 +251,75 @@ APPLE_OAUTH_CLIENT_IDS must contain the allowed Apple token audience values.
 For iOS apps this is usually the bundle id, and for web flows this is the Apple Services ID.
 Apple may only send email on the first authorization, so first login must include email or the Apple account must already be linked.
 ```
+
+### Native in-app subscriptions
+
+The app verifies Google Play and App Store subscriptions before granting an
+entitlement. The authenticated user comes only from the bearer token.
+
+```http
+POST /api/payments/v1/payments/verify-in-app-purchase/
+Authorization: Bearer <access-token>
+Content-Type: application/json
+```
+
+Android request (the Flutter `serverVerificationData` value is the purchase
+token):
+
+```json
+{
+  "platform": "android",
+  "product_id": "attentionminder.monthly",
+  "purchase_id": "GPA order id when available",
+  "purchase_token": "google-play-purchase-token",
+  "verification_source": "google_play",
+  "is_restore": false
+}
+```
+
+iOS request. Send the StoreKit 2 signed transaction as `verification_data`
+when available; otherwise the backend looks up `transaction_id` through the
+App Store Server API:
+
+```json
+{
+  "platform": "ios",
+  "product_id": "attentionminder.monthly",
+  "transaction_id": "app-store-transaction-id",
+  "verification_data": "optional-Apple-signed-transaction-JWS",
+  "verification_source": "app_store",
+  "is_restore": false
+}
+```
+
+Successful response data:
+
+```json
+{
+  "verified": true,
+  "subscription_status": "active",
+  "platform": "android",
+  "product_id": "attentionminder.monthly",
+  "expires_at": "2026-09-10T12:00:00Z"
+}
+```
+
+Current entitlement: `GET /api/payments/v1/payments/entitlement/`.
+
+Lifecycle webhooks:
+
+- Google RTDN push URL: `/api/payments/v1/payments/notifications/google-play/`
+  with the configured token as `X-Goog-Verification-Token`.
+- App Store Server Notifications V2 URL:
+  `/api/payments/v1/payments/notifications/app-store/`.
+
+Before starting a purchase, fetch user-safe store identifiers from
+`GET /api/payments/v1/payments/purchase-account-identifiers/` and pass the
+Google value as `obfuscatedAccountId` and the Apple value as
+`appAccountToken`/`applicationUserName`. Then set
+`STORE_REQUIRE_ACCOUNT_ASSOCIATION=True`. This prevents a valid store purchase from being transferred between
+application accounts. Store credentials, Apple private keys, and root
+certificates must be mounted secrets, never committed files.
 
 Account deletion requires the current password:
 
@@ -388,35 +470,6 @@ Redis-backed article response cache
 Article cache invalidation signals
 ```
 
-### Payments
-
-Base paths:
-
-```text
-/api/payments/
-/api/payments/v1/payments/
-```
-
-Endpoints:
-
-```text
-POST create-checkout-session/
-GET  subscription/
-POST create-billing-portal-session/
-POST webhook/
-```
-
-Responsibilities:
-
-```text
-Stripe customer tracking
-Checkout sessions
-Billing portal sessions
-Subscription state
-Payment invoices
-Stripe webhook event idempotency
-```
-
 ### Websocket
 
 The legacy face-detection websocket endpoint has been removed. The backend must not receive webcam frames or run OpenCV/MediaPipe/dlib attention detection.
@@ -488,12 +541,6 @@ UserGoal
 
 Article
   Article CMS records
-
-StripeCustomer
-Subscription
-PaymentInvoice
-StripeWebhookEvent
-  Payment and subscription records
 ```
 
 ## Redis Architecture
@@ -757,8 +804,6 @@ The score is submitted by the frontend and stored in `ManagementActivitySession`
 /attention-minder-support/  App Store support contact page
 /account-deletion/  Google Play account deletion instructions
 /delete-account/    Alias for account deletion page
-/payment/success/   Stripe payment success landing page
-/payment/cancel/    Stripe payment cancel landing page
 ```
 
 ## API Documentation

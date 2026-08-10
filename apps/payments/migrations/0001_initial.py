@@ -6,13 +6,8 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     initial = True
-
-    dependencies = [
-        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-    ]
-
+    dependencies = [migrations.swappable_dependency(settings.AUTH_USER_MODEL)]
     operations = [
         migrations.CreateModel(
             name='StripeWebhookEvent',
@@ -26,9 +21,7 @@ class Migration(migrations.Migration):
                 ('error', models.TextField(blank=True)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
             ],
-            options={
-                'db_table': 'StripeWebhookEvent',
-            },
+            options={'db_table': 'StripeWebhookEvent'},
         ),
         migrations.CreateModel(
             name='StripeCustomer',
@@ -39,9 +32,7 @@ class Migration(migrations.Migration):
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='stripe_customer', to=settings.AUTH_USER_MODEL)),
             ],
-            options={
-                'db_table': 'StripeCustomer',
-            },
+            options={'db_table': 'StripeCustomer'},
         ),
         migrations.CreateModel(
             name='Subscription',
@@ -59,9 +50,7 @@ class Migration(migrations.Migration):
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='subscription', to=settings.AUTH_USER_MODEL)),
             ],
-            options={
-                'db_table': 'Subscription',
-            },
+            options={'db_table': 'Subscription'},
         ),
         migrations.CreateModel(
             name='PaymentInvoice',
@@ -78,48 +67,16 @@ class Migration(migrations.Migration):
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='payment_invoices', to=settings.AUTH_USER_MODEL)),
             ],
-            options={
-                'db_table': 'PaymentInvoice',
-            },
+            options={'db_table': 'PaymentInvoice'},
         ),
-        migrations.AddIndex(
-            model_name='stripewebhookevent',
-            index=models.Index(fields=['event_type', 'created_at'], name='StripeWebho_event_t_da87af_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='stripewebhookevent',
-            index=models.Index(fields=['processed', 'created_at'], name='StripeWebho_process_3e69e6_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='stripecustomer',
-            index=models.Index(fields=['user'], name='StripeCusto_user_id_78e8f3_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='stripecustomer',
-            index=models.Index(fields=['stripe_customer_id'], name='StripeCusto_stripe__211d28_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='subscription',
-            index=models.Index(fields=['user', 'status'], name='Subscriptio_user_id_c3db21_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='subscription',
-            index=models.Index(fields=['status', 'current_period_end'], name='Subscriptio_status_a6bc1c_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='subscription',
-            index=models.Index(fields=['stripe_subscription_id'], name='Subscriptio_stripe__a2fba5_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='paymentinvoice',
-            index=models.Index(fields=['user', 'created_at'], name='PaymentInvo_user_id_45f43f_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='paymentinvoice',
-            index=models.Index(fields=['status'], name='PaymentInvo_status_335546_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='paymentinvoice',
-            index=models.Index(fields=['stripe_subscription_id'], name='PaymentInvo_stripe__5a8066_idx'),
-        ),
+        migrations.AddIndex(model_name='stripewebhookevent', index=models.Index(fields=['event_type', 'created_at'], name='StripeWebho_event_t_da87af_idx')),
+        migrations.AddIndex(model_name='stripewebhookevent', index=models.Index(fields=['processed', 'created_at'], name='StripeWebho_process_3e69e6_idx')),
+        migrations.AddIndex(model_name='stripecustomer', index=models.Index(fields=['user'], name='StripeCusto_user_id_78e8f3_idx')),
+        migrations.AddIndex(model_name='stripecustomer', index=models.Index(fields=['stripe_customer_id'], name='StripeCusto_stripe__211d28_idx')),
+        migrations.AddIndex(model_name='subscription', index=models.Index(fields=['user', 'status'], name='Subscriptio_user_id_c3db21_idx')),
+        migrations.AddIndex(model_name='subscription', index=models.Index(fields=['status', 'current_period_end'], name='Subscriptio_status_a6bc1c_idx')),
+        migrations.AddIndex(model_name='subscription', index=models.Index(fields=['stripe_subscription_id'], name='Subscriptio_stripe__a2fba5_idx')),
+        migrations.AddIndex(model_name='paymentinvoice', index=models.Index(fields=['user', 'created_at'], name='PaymentInvo_user_id_45f43f_idx')),
+        migrations.AddIndex(model_name='paymentinvoice', index=models.Index(fields=['status'], name='PaymentInvo_status_335546_idx')),
+        migrations.AddIndex(model_name='paymentinvoice', index=models.Index(fields=['stripe_subscription_id'], name='PaymentInvo_stripe__5a8066_idx')),
     ]

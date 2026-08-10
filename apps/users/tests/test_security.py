@@ -435,6 +435,115 @@ class TestProductionSecretConfig:
 
 
 @pytest.mark.django_db
+class TestGoogleSocialLogin:
+    social_login_url = '/api/users/v1/users/social-login'
+
+    def test_google_social_login_creates_user_oauth_link_and_tokens(self, api_client):
+        identity = {
+            'provider': OAuthProvider.GOOGLE,
+            'provider_subject': 'google-subject-123',
+            'email': 'google_user@test.com',
+            'email_verified': True,
+            'username': 'Google_User',
+            'dob': None,
+        }
+
+        with patch('apps.users.api.views.SocialLoginView._verify_google_token', return_value=identity):
+            response = api_client.post(
+                self.social_login_url,
+                {'provider': 'google', 'id_token': 'google.id.token'},
+                format='json',
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['status'] is True
+        assert response.data['data']['tokens']['access']
+        assert response.data['data']['tokens']['refresh']
+        user = Users.objects.get(email='google_user@test.com')
+        oauth_account = OAuthAccount.objects.get(
+            provider=OAuthProvider.GOOGLE,
+            provider_subject='google-subject-123',
+        )
+        assert oauth_account.user == user
+        assert user.is_verified is True
+        assert user.has_usable_password() is False
+
+    def test_google_social_login_reuses_existing_link(self, api_client):
+        user = Users.objects.create_user(
+            username='google_user',
+            email='google_user@test.com',
+            is_verified=True,
+        )
+        OAuthAccount.objects.create(
+            user=user,
+            provider=OAuthProvider.GOOGLE,
+            provider_subject='google-subject-123',
+            email=user.email,
+            email_verified=True,
+        )
+        identity = {
+            'provider': OAuthProvider.GOOGLE,
+            'provider_subject': 'google-subject-123',
+            'email': user.email,
+            'email_verified': True,
+            'username': user.username,
+            'dob': None,
+        }
+
+        with patch('apps.users.api.views.SocialLoginView._verify_google_token', return_value=identity):
+            response = api_client.post(
+                self.social_login_url,
+                {'provider': 'google', 'id_token': 'google.id.token'},
+                format='json',
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert Users.objects.filter(email=user.email).count() == 1
+        assert OAuthAccount.objects.filter(
+            provider=OAuthProvider.GOOGLE,
+            provider_subject='google-subject-123',
+        ).count() == 1
+
+    @override_settings(GOOGLE_OAUTH_CLIENT_IDS=['allowed-client.apps.googleusercontent.com'])
+    def test_google_token_requires_configured_audience_and_verified_email(self, monkeypatch):
+        view = __import__(
+            'apps.users.api.views',
+            fromlist=['SocialLoginView'],
+        ).SocialLoginView()
+        monkeypatch.setattr(
+            'apps.users.api.views.google_id_token.verify_oauth2_token',
+            lambda *args, **kwargs: {
+                'iss': 'https://accounts.google.com',
+                'aud': 'different-client.apps.googleusercontent.com',
+                'sub': 'google-subject-123',
+                'email': 'google_user@test.com',
+                'email_verified': True,
+            },
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            view._verify_google_token('google.id.token')
+
+        assert 'audience mismatch' in str(exc_info.value.detail['id_token'])
+
+    @override_settings(GOOGLE_OAUTH_CLIENT_IDS=['allowed-client.apps.googleusercontent.com'])
+    def test_invalid_google_token_returns_unauthorized(self, api_client):
+        with patch(
+            'apps.users.api.views.google_id_token.verify_oauth2_token',
+            side_effect=ValueError('bad signature'),
+        ):
+            response = api_client.post(
+                self.social_login_url,
+                {'provider': 'google', 'id_token': 'invalid.google.token'},
+                format='json',
+            )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.data['status'] is False
+        assert response.data['errors']['id_token'] == 'Invalid or expired Google ID token'
+
+
+@pytest.mark.django_db
 class TestAppleSocialLogin:
     social_login_url = '/api/users/v1/users/social-login'
 

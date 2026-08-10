@@ -1,165 +1,115 @@
+import hmac
+
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.shortcuts import render
-from django.views.decorators.csrf import csrf_exempt
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.payments.models import Subscription
+from apps.payments.models import SubscriptionEntitlement
 from apps.payments.serializers import (
-    BillingPortalSessionRequestSerializer,
-    CheckoutSessionRequestSerializer,
-    SubscriptionSerializer,
+    AppleNotificationSerializer,
+    EntitlementSerializer,
+    GoogleNotificationSerializer,
+    InAppPurchaseVerificationSerializer,
 )
 from apps.payments.services import (
-    construct_webhook_event,
-    create_billing_portal_session,
-    create_checkout_session,
-    process_webhook_event,
+    process_apple_notification,
+    process_google_rtdn,
+    purchase_account_identifiers,
+    verify_in_app_purchase,
 )
 from helpers.exceptions.exceptions import safe_exception_response
-from helpers.helper import get_token_user_or_none
 from helpers.response import ResponseInfo
 
 
-def payment_success_page(request):
-    return render(
-        request,
-        'payments/payment_result.html',
-        {
-            'is_success': True,
-            'title': 'Payment successful',
-            'message': 'Your payment was completed. You can now return to the ADHD Minder app.',
-            'app_return_url': settings.PAYMENT_APP_SUCCESS_URL,
-        },
-    )
+def _error(message, http_status, errors=None):
+    response = ResponseInfo(status=False, status_code=http_status, message=message).response
+    if errors:
+        response['errors'] = errors
+    return Response(response, status=http_status)
 
 
-def payment_cancel_page(request):
-    return render(
-        request,
-        'payments/payment_result.html',
-        {
-            'is_success': False,
-            'title': 'Payment cancelled',
-            'message': 'No payment was completed. You can return to the ADHD Minder app and try again.',
-            'app_return_url': settings.PAYMENT_APP_CANCEL_URL,
-        },
-    )
-
-
-class CreateCheckoutSessionApiView(APIView):
+class VerifyInAppPurchaseApiView(APIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = CheckoutSessionRequestSerializer
 
-    @swagger_auto_schema(tags=['Payments'], request_body=CheckoutSessionRequestSerializer)
+    @swagger_auto_schema(tags=['Payments'], request_body=InAppPurchaseVerificationSerializer)
     def post(self, request):
-        response_format = ResponseInfo().response
-        serializer = self.serializer_class(data=request.data)
+        serializer = InAppPurchaseVerificationSerializer(data=request.data)
         if not serializer.is_valid():
-            response_format['status'] = False
-            response_format['status_code'] = status.HTTP_400_BAD_REQUEST
-            response_format['errors'] = serializer.errors
-            return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
-
+            return _error('Invalid purchase verification request', status.HTTP_400_BAD_REQUEST, serializer.errors)
         try:
-            user = get_token_user_or_none(request)
-            if not user:
-                response_format['status'] = False
-                response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
-                response_format['message'] = 'Authentication credentials were not provided or are invalid'
-                return Response(response_format, status=status.HTTP_401_UNAUTHORIZED)
-
-            data = create_checkout_session(user, **serializer.validated_data)
-            response_format['data'] = data
-            response_format['message'] = 'Success'
-            return Response(response_format, status=status.HTTP_200_OK)
+            entitlement = verify_in_app_purchase(request.user, serializer.validated_data)
+            response = ResponseInfo(message='Purchase verified').response
+            response['data'] = EntitlementSerializer(entitlement).data
+            return Response(response, status=status.HTTP_200_OK)
+        except ValidationError as exc:
+            return _error('Purchase verification failed', status.HTTP_400_BAD_REQUEST, exc.detail)
         except ImproperlyConfigured as exc:
-            response_format['status'] = False
-            response_format['status_code'] = status.HTTP_503_SERVICE_UNAVAILABLE
-            response_format['message'] = str(exc)
-            return Response(response_format, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return _error(str(exc), status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:
             return safe_exception_response(exc, context={'view': self})
 
 
-class SubscriptionApiView(APIView):
+class EntitlementApiView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(tags=['Payments'])
     def get(self, request):
-        response_format = ResponseInfo().response
-        user = get_token_user_or_none(request)
-        subscription = Subscription.objects.filter(user=user).first() if user else None
-        if not subscription:
-            response_format['data'] = {
-                'is_active': False,
-                'status': '',
-                'current_period_start': None,
-                'current_period_end': None,
-                'cancel_at_period_end': False,
-                'stripe_subscription_id': '',
-            }
-            response_format['message'] = 'Success'
-            return Response(response_format, status=status.HTTP_200_OK)
-
-        response_format['data'] = SubscriptionSerializer(subscription).data
-        response_format['message'] = 'Success'
-        return Response(response_format, status=status.HTTP_200_OK)
+        entitlement = SubscriptionEntitlement.objects.filter(user=request.user).first()
+        response = ResponseInfo(message='Success').response
+        response['data'] = EntitlementSerializer(entitlement).data if entitlement else {
+            'verified': False,
+            'subscription_status': 'inactive',
+            'platform': '',
+            'product_id': '',
+            'expires_at': None,
+        }
+        return Response(response)
 
 
-class CreateBillingPortalSessionApiView(APIView):
+class PurchaseAccountIdentifiersApiView(APIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = BillingPortalSessionRequestSerializer
 
-    @swagger_auto_schema(tags=['Payments'], request_body=BillingPortalSessionRequestSerializer)
-    def post(self, request):
-        response_format = ResponseInfo().response
-        serializer = self.serializer_class(data=request.data)
-        if not serializer.is_valid():
-            response_format['status'] = False
-            response_format['status_code'] = status.HTTP_400_BAD_REQUEST
-            response_format['errors'] = serializer.errors
-            return Response(response_format, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = get_token_user_or_none(request)
-            if not user:
-                response_format['status'] = False
-                response_format['status_code'] = status.HTTP_401_UNAUTHORIZED
-                response_format['message'] = 'Authentication credentials were not provided or are invalid'
-                return Response(response_format, status=status.HTTP_401_UNAUTHORIZED)
-
-            response_format['data'] = create_billing_portal_session(user, **serializer.validated_data)
-            response_format['message'] = 'Success'
-            return Response(response_format, status=status.HTTP_200_OK)
-        except ImproperlyConfigured as exc:
-            response_format['status'] = False
-            response_format['status_code'] = status.HTTP_503_SERVICE_UNAVAILABLE
-            response_format['message'] = str(exc)
-            return Response(response_format, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        except Exception as exc:
-            return safe_exception_response(exc, context={'view': self})
+    @swagger_auto_schema(tags=['Payments'])
+    def get(self, request):
+        response = ResponseInfo(message='Success').response
+        response['data'] = purchase_account_identifiers(request.user)
+        return Response(response)
 
 
-class StripeWebhookApiView(APIView):
+class GoogleRtdnApiView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
-    @swagger_auto_schema(tags=['Payments'])
-    @csrf_exempt
     def post(self, request):
-        signature = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+        expected = settings.GOOGLE_RTDN_VERIFICATION_TOKEN
+        supplied = request.headers.get('X-Goog-Verification-Token', '')
+        if not expected or not hmac.compare_digest(expected, supplied):
+            return Response({'received': False}, status=status.HTTP_401_UNAUTHORIZED)
+        serializer = GoogleNotificationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'received': False, 'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            event = construct_webhook_event(request.body, signature)
-            result = process_webhook_event(event)
-            return Response({'received': True, **result}, status=status.HTTP_200_OK)
-        except ValueError:
-            return Response({'received': False, 'message': 'Invalid payload'}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as exc:
-            if exc.__class__.__name__ == 'SignatureVerificationError':
-                return Response({'received': False, 'message': 'Invalid signature'}, status=status.HTTP_400_BAD_REQUEST)
-            return safe_exception_response(exc, context={'view': self})
+            duplicate = process_google_rtdn(serializer.validated_data)
+            return Response({'received': True, 'duplicate': duplicate})
+        except ValidationError as exc:
+            return Response({'received': False, 'errors': exc.detail}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AppleServerNotificationApiView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = AppleNotificationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'received': False, 'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            duplicate = process_apple_notification(serializer.validated_data['signedPayload'])
+            return Response({'received': True, 'duplicate': duplicate})
+        except ValidationError as exc:
+            return Response({'received': False, 'errors': exc.detail}, status=status.HTTP_400_BAD_REQUEST)
