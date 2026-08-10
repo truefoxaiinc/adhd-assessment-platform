@@ -9,6 +9,12 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.payments.models import (
+    EntitlementStatus,
+    StorePlatform,
+    StorePurchase,
+    SubscriptionEntitlement,
+)
 from apps.users.models import OAuthAccount, OAuthProvider, PasswordResetOTP, Users
 from apps.users.services.password_reset_service import PasswordResetService
 from project_adhd import settings as project_settings
@@ -279,6 +285,42 @@ class TestJWTAuthenticationUserState:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] is True
+        assert response.data['data']['has_active_subscription'] is False
+        assert response.data['data']['subscription_status'] == 'inactive'
+        assert response.data['data']['subscription_expires_at'] == ''
+
+    def test_profile_returns_active_subscription_details(self, api_client):
+        user = Users.objects.create_user(
+            username='subscribed_profile_user',
+            email='subscribed_profile_user@test.com',
+            password='Password123!',
+            is_verified=True,
+        )
+        expires_at = timezone.now() + timedelta(days=30)
+        purchase = StorePurchase.objects.create(
+            user=user,
+            platform=StorePlatform.ANDROID,
+            product_id='attentionminder.monthly',
+            store_purchase_id='profile-subscription-token',
+            status=EntitlementStatus.ACTIVE,
+            expires_at=expires_at,
+        )
+        SubscriptionEntitlement.objects.create(
+            user=user,
+            platform=StorePlatform.ANDROID,
+            product_id=purchase.product_id,
+            status=EntitlementStatus.ACTIVE,
+            expires_at=expires_at,
+            source_purchase=purchase,
+        )
+        self._authenticate_with_jwt(api_client, user)
+
+        response = api_client.get(self.profile_url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['has_active_subscription'] is True
+        assert response.data['data']['subscription_status'] == 'active'
+        assert response.data['data']['subscription_expires_at']
 
     def test_inactive_user_token_is_rejected(self, api_client):
         user = Users.objects.create_user(

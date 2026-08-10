@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.payments.models import SubscriptionEntitlement
 from apps.users.models import Users
 
 
@@ -6,6 +7,9 @@ from apps.users.models import Users
 class GetUserProfileDetailSchema(serializers.ModelSerializer):
     profile_image_url = serializers.SerializerMethodField()
     is_completed = serializers.SerializerMethodField()
+    has_active_subscription = serializers.SerializerMethodField()
+    subscription_status = serializers.SerializerMethodField()
+    subscription_expires_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Users
@@ -23,7 +27,17 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
             'is_first',
             'is_last',
             'is_completed',
+            'has_active_subscription',
+            'subscription_status',
+            'subscription_expires_at',
         ]
+
+    def _get_subscription_entitlement(self, instance):
+        cache_attribute = '_profile_subscription_entitlement'
+        if not hasattr(instance, cache_attribute):
+            entitlement = SubscriptionEntitlement.objects.filter(user_id=instance.pk).first()
+            setattr(instance, cache_attribute, entitlement)
+        return getattr(instance, cache_attribute)
 
     def get_profile_image_url(self, instance):
         request = self.context.get('request')
@@ -45,6 +59,20 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
             instance.weight,
         ]
         return all(bool(value) for value in required_fields)
+
+    def get_has_active_subscription(self, instance):
+        entitlement = self._get_subscription_entitlement(instance)
+        return bool(entitlement and entitlement.is_active)
+
+    def get_subscription_status(self, instance):
+        entitlement = self._get_subscription_entitlement(instance)
+        return entitlement.status if entitlement else 'inactive'
+
+    def get_subscription_expires_at(self, instance):
+        entitlement = self._get_subscription_entitlement(instance)
+        if not entitlement or not entitlement.expires_at:
+            return None
+        return serializers.DateTimeField().to_representation(entitlement.expires_at)
 
     def to_representation(self, instance):
         datas = super().to_representation(instance)
