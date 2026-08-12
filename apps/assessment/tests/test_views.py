@@ -85,6 +85,7 @@ class TestAssessmentViews:
             'total_processed_frames': 120,
             'sampled_frames': 120,
             'session_duration_seconds': 300,
+            'avg_sustained_duration': 45.5,
             'inattention_duration': 20,
             'gaze_ratio_avg': 1.5,
             'drowsy_state': 0,
@@ -486,6 +487,7 @@ class TestAssessmentViews:
             is_assessment=True,
             concentration_score=6,
             average_concentration_score=6,
+            avg_sustained_duration=42.5,
         )
         FaceAttentionSession.objects.create(
             user=user,
@@ -513,6 +515,7 @@ class TestAssessmentViews:
         assert response.data['data']['results'][0]['session_id'] == 'assessment-session'
         assert response.data['data']['results'][0]['is_assessment'] is True
         assert response.data['data']['results'][0]['score'] == 75.0
+        assert response.data['data']['results'][0]['avg_sustained_duration'] == 42.5
 
     def test_ai_score_history_filters_management_sessions(self, api_client, user):
         FaceAttentionSession.objects.create(
@@ -866,6 +869,7 @@ class TestAssessmentViews:
         assert response.data['status'] is True
         assert response.data['data']['session_id'] == 'frontend-session'
         assert response.data['data']['score'] == 80.0
+        assert response.data['data']['avg_sustained_duration'] == 45.5
 
         session = FaceAttentionSession.objects.get(
             user=user,
@@ -874,6 +878,7 @@ class TestAssessmentViews:
         assert session.file_id == content.id
         assert session.average_concentration_score == 6.4
         assert session.total_processed_frames == 120
+        assert session.avg_sustained_duration == 45.5
 
         user.refresh_from_db()
         assert user.ai_assessment_score == 80
@@ -1139,3 +1144,19 @@ class TestAssessmentViews:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'inattention_duration' in response.data['errors']
+
+    def test_save_frontend_attention_score_rejects_sustained_duration_over_session(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            self.AI_SCORE_SAVE_URL,
+            self.full_attention_payload(
+                session_id='bad-sustained-duration-session',
+                session_duration_seconds=30,
+                avg_sustained_duration=31,
+            ),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'avg_sustained_duration' in response.data['errors']

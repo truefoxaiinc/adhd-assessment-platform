@@ -144,6 +144,7 @@ class FrontendAttentionScoreSerializer(serializers.Serializer):
     watching_video_frames = serializers.IntegerField(required=False, min_value=0, default=0)
     idle_distracted_frames = serializers.IntegerField(required=False, min_value=0, default=0)
     session_duration_seconds = FiniteFloatField(required=True, min_value=0)
+    avg_sustained_duration = FiniteFloatField(required=False, min_value=0, default=0)
     inattention_duration = FiniteFloatField(required=True, min_value=0)
     maximum_inattention_duration = FiniteFloatField(required=False, min_value=0, default=0)
     gaze_ratio_avg = FiniteFloatField(required=True, min_value=0)
@@ -212,6 +213,11 @@ class FrontendAttentionScoreSerializer(serializers.Serializer):
         if attrs['maximum_inattention_duration'] > attrs['session_duration_seconds']:
             raise ValidationError({
                 'maximum_inattention_duration': 'Cannot exceed session_duration_seconds.'
+            })
+
+        if attrs['avg_sustained_duration'] > attrs['session_duration_seconds']:
+            raise ValidationError({
+                'avg_sustained_duration': 'Cannot exceed session_duration_seconds.'
             })
 
         return attrs

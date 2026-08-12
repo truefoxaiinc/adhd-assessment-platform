@@ -71,6 +71,7 @@ class AIAssessmentScoreSchema(serializers.ModelSerializer):
             'watching_video_frames',
             'idle_distracted_frames',
             'session_duration_seconds',
+            'avg_sustained_duration',
             'inattention_duration',
             'maximum_inattention_duration',
             'gaze_ratio_avg',

@@ -46,6 +46,8 @@ class FaceAttentionSession(models.Model):
     eyes_closed_count = models.IntegerField(default=0)
     gaze_warning_count = models.IntegerField(default=0)
     session_duration_seconds = models.FloatField(default=0.0)
+    avg_sustained_duration = models.FloatField(default=0.0)
+
     created_at            = models.DateTimeField(auto_now_add=True)
 
     class Meta:

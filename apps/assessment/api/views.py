@@ -769,6 +769,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             "eyes_closed_count": session.eyes_closed_count,
             "gaze_warning_count": session.gaze_warning_count,
             "session_duration_seconds": round(session.session_duration_seconds, 2),
+            "avg_sustained_duration": round(session.avg_sustained_duration, 2),
             "created_at": local_created_at.isoformat(),
             "started_at": local_created_at.isoformat(),
             "time_label": local_created_at.strftime("%I:%M %p").lstrip("0"),
