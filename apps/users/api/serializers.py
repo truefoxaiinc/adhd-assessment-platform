@@ -62,14 +62,12 @@ class UserUpdateProfileSerializer(serializers.ModelSerializer):
     dob         = serializers.DateField(required=False, allow_null=True)
     gender      = serializers.ChoiceField(choices=GenderCategory.choices, required=False, allow_null=True, allow_blank=True)
     country     = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    height      = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    weight      = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     profile_image = serializers.ImageField(required=False, allow_null=True)
     is_last     = serializers.BooleanField(required=False)
 
     class Meta:
         model = Users
-        fields = ['id','username','email','password','dob','gender','country','height','weight','profile_image','is_last']
+        fields = ['id','username','email','password','dob','gender','country','profile_image','is_last']
 
     def validate(self, attrs):
         email           = attrs.get('email', '')
@@ -109,8 +107,6 @@ class UserUpdateProfileSerializer(serializers.ModelSerializer):
         instance.dob        = validated_data.get('dob', instance.dob)
         instance.gender     = validated_data.get('gender', instance.gender)
         instance.country    = validated_data.get('country', instance.country)
-        instance.height     = validated_data.get('height', instance.height)
-        instance.weight     = validated_data.get('weight', instance.weight)
         if 'profile_image' in validated_data:
             instance.profile_image = validated_data.get('profile_image')
         if 'is_last' in validated_data:

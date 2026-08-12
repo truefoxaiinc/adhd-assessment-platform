@@ -265,6 +265,7 @@ class TestRegistrationPrivilegeEscalation:
 @pytest.mark.django_db
 class TestJWTAuthenticationUserState:
     profile_url = '/api/users/v1/users/get-user-profile'
+    update_profile_url = '/api/users/v1/users/update-profile'
 
     def _authenticate_with_jwt(self, api_client, user):
         access_token = RefreshToken.for_user(user).access_token
@@ -288,6 +289,87 @@ class TestJWTAuthenticationUserState:
         assert response.data['data']['has_active_subscription'] is False
         assert response.data['data']['subscription_status'] == 'inactive'
         assert response.data['data']['subscription_expires_at'] == ''
+
+    def test_profile_without_height_and_weight_is_complete(self, api_client):
+        user = Users.objects.create_user(
+            username='complete_profile_user',
+            email='complete_profile_user@test.com',
+            password='Password123!',
+            dob='1998-09-01',
+            gender='MALE',
+            country='India',
+            height=None,
+            weight=None,
+            is_verified=True,
+        )
+        self._authenticate_with_jwt(api_client, user)
+
+        response = api_client.get(self.profile_url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['is_completed'] is True
+        assert response.data['data']['profile_image'] is None
+        assert response.data['data']['profile_image_url'] is None
+        assert 'height' not in response.data['data']
+        assert 'weight' not in response.data['data']
+
+    def test_profile_update_succeeds_without_height_and_weight(self, api_client):
+        user = Users.objects.create_user(
+            username='profile_before_update',
+            email='profile_before_update@test.com',
+            password='Password123!',
+            height=None,
+            weight=None,
+            is_verified=True,
+        )
+        self._authenticate_with_jwt(api_client, user)
+
+        response = api_client.post(
+            self.update_profile_url,
+            {
+                'id': user.id,
+                'username': 'admin',
+                'email': 'admin@gmail.com',
+                'dob': '1998-09-01',
+                'gender': 'MALE',
+                'country': 'India',
+            },
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['data']['is_completed'] is True
+        assert 'height' not in response.data['data']
+        assert 'weight' not in response.data['data']
+        user.refresh_from_db()
+        assert user.height is None
+        assert user.weight is None
+
+    @pytest.mark.parametrize('missing_field', ['dob', 'gender', 'country'])
+    def test_missing_required_profile_field_is_incomplete(
+        self,
+        api_client,
+        missing_field,
+    ):
+        profile_fields = {
+            'dob': '1998-09-01',
+            'gender': 'MALE',
+            'country': 'India',
+        }
+        profile_fields[missing_field] = None
+        user = Users.objects.create_user(
+            username=f'missing_{missing_field}_user',
+            email=f'missing_{missing_field}_user@test.com',
+            password='Password123!',
+            is_verified=True,
+            **profile_fields,
+        )
+        self._authenticate_with_jwt(api_client, user)
+
+        response = api_client.get(self.profile_url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['is_completed'] is False
 
     def test_profile_returns_active_subscription_details(self, api_client):
         user = Users.objects.create_user(

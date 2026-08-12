@@ -20,8 +20,6 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
             'dob',
             'gender',
             'country',
-            'height',
-            'weight',
             'profile_image',
             'profile_image_url',
             'is_first',
@@ -42,7 +40,7 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
     def get_profile_image_url(self, instance):
         request = self.context.get('request')
         if not instance.profile_image:
-            return ""
+            return None
         image_url = instance.profile_image.url
         if request:
             return request.build_absolute_uri(image_url)
@@ -55,8 +53,6 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
             instance.dob,
             instance.gender,
             instance.country,
-            instance.height,
-            instance.weight,
         ]
         return all(bool(value) for value in required_fields)
 
@@ -82,4 +78,7 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
                     datas[key] = ""
             except KeyError:
                 pass
+        if not instance.profile_image:
+            datas['profile_image'] = None
+            datas['profile_image_url'] = None
         return datas
