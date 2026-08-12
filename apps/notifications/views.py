@@ -10,6 +10,10 @@ from apps.notifications.serializers import (
     RegisterPushDeviceSerializer,
     UnregisterPushDeviceSerializer,
 )
+from apps.notifications.services import (
+    create_pending_activity_notification,
+    serialize_program_notification,
+)
 from helpers.response import ResponseInfo
 
 
@@ -65,3 +69,26 @@ class UnregisterPushDeviceApiView(APIView):
             token=serializer.validated_data['token'],
         ).update(is_active=False)
         return _response('Device unregistered')
+
+
+class PendingActivityNotificationApiView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        tags=['Notifications'],
+        operation_description=(
+            'Send a reminder only when a new management day is unlocked and '
+            'earlier activities remain incomplete.'
+        ),
+    )
+    def post(self, request):
+        notification, no_notification_data = create_pending_activity_notification(request.user)
+        if no_notification_data is not None:
+            return _response(
+                'No pending activity notification required.',
+                no_notification_data,
+            )
+        return _response(
+            'Pending activity notification created successfully.',
+            serialize_program_notification(notification),
+        )

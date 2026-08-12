@@ -11,5 +11,10 @@ urlpatterns = [
             path('register/', views.RegisterPushDeviceApiView.as_view(), name='register-device'),
             path('unregister/', views.UnregisterPushDeviceApiView.as_view(), name='unregister-device'),
         ])),
+        path(
+            'pending-activities/check/',
+            views.PendingActivityNotificationApiView.as_view(),
+            name='pending-activity-notification',
+        ),
     ])),
 ]

@@ -29,3 +29,34 @@ class PushDevice(models.Model):
 
     def __str__(self):
         return f'{self.user_id}:{self.platform}:{self.pk}'
+
+
+class ProgramNotification(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='program_notifications',
+    )
+    notification_id = models.CharField(max_length=255, unique=True)
+    notification_type = models.CharField(max_length=100)
+    title = models.CharField(max_length=255)
+    body = models.TextField()
+    newly_unlocked_day = models.PositiveIntegerField()
+    pending_activity_count = models.PositiveIntegerField(default=0)
+    pending_days = models.JSONField(default=list)
+    target_screen = models.CharField(max_length=100)
+    is_sent = models.BooleanField(default=False)
+    sent_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ProgramNotification'
+        indexes = [
+            models.Index(
+                fields=['user', 'notification_type', 'newly_unlocked_day'],
+                name='program_notice_user_day_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return self.notification_id

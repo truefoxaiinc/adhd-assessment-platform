@@ -525,4 +525,10 @@ CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULE = {
+    'pending-activity-unlock-reminders': {
+        'task': 'apps.notifications.tasks.send_pending_activity_notifications',
+        'schedule': 900.0,
+    },
+}
 

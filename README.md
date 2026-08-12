@@ -235,6 +235,17 @@ The backend can call `apps.notifications.services.notify_user()` from trusted ev
 or unregistered FCM tokens are disabled automatically. Do not expose a public endpoint that
 accepts arbitrary notification recipients or message content.
 
+Pending activity reminders are checked every 15 minutes by Celery Beat and can also be
+checked for the authenticated user through:
+
+```text
+POST /api/notifications/v1/pending-activities/check/
+```
+
+The backend sends once per user/unlocked day only when the unlocked day is greater than one
+and an activity from an earlier management day remains incomplete. Run both Celery worker
+and Celery Beat in production for automatic reminders.
+
 Social login request:
 
 ```json
