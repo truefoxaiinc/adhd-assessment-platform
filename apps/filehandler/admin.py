@@ -26,7 +26,9 @@ class AdhdContentAdmin(ModelAdmin):
     fieldsets = (
         ('Content', {'fields': ('title', 'description', 'file_type', 'status')}),
         ('Placement', {'fields': ('is_management', 'age_group', 'day', 'order_number')}),
-        ('Body and media', {'fields': ('article_body', 'file', 'cover_image', 'activity_name')}),
+        ('Article', {'fields': ('article_content', 'cover_image'), 'classes': ('article-fields',)}),
+        ('Video or file', {'fields': ('file',), 'classes': ('file-fields',)}),
+        ('Activity', {'fields': ('activity_name',), 'classes': ('activity-fields',)}),
         ('Learning', {'fields': ('estimated_duration_minutes', 'question_mode', 'published_at')}),
     )
 
@@ -34,6 +36,9 @@ class AdhdContentAdmin(ModelAdmin):
         initial = super().get_changeform_initial_data(request)
         initial.setdefault('status', ContentStatus.DRAFT)
         return initial
+
+    class Media:
+        js = ('filehandler/js/content_type_fields.js',)
 
     @admin.display(description='Phase', ordering='is_management')
     def content_phase(self, obj):

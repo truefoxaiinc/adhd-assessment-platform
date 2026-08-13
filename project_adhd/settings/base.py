@@ -134,6 +134,7 @@ INSTALLED_APPS = [
 ]
 
 LOCAL_APPS = [
+    'django_ckeditor_5',
     'apps.authentication',
     'apps.users',
     'apps.assessment',
@@ -144,6 +145,43 @@ LOCAL_APPS = [
     'apps.payments',
     'apps.notifications',
 ]
+
+CKEDITOR_5_FILE_STORAGE = 'project_adhd.storage_backends.ArticleImageStorage'
+CKEDITOR_5_FILE_UPLOAD_PERMISSION = 'staff'
+CKEDITOR_5_ALLOW_ALL_FILE_TYPES = False
+CKEDITOR_5_UPLOAD_FILE_TYPES = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+CKEDITOR_5_MAX_FILE_SIZE = 5
+CKEDITOR_5_CONFIGS = {
+    'article': {
+        'toolbar': {
+            'items': [
+                'heading', '|', 'fontSize', 'fontColor', 'fontBackgroundColor',
+                '|', 'bold', 'italic', 'underline', 'strikethrough', 'link',
+                '|', 'bulletedList', 'numberedList', 'blockQuote', 'insertTable',
+                'imageUpload', 'mediaEmbed', '|', 'alignment', 'outdent',
+                'indent', '|', 'undo', 'redo', 'sourceEditing',
+            ],
+            'shouldNotGroupWhenFull': True,
+        },
+        'heading': {
+            'options': [
+                {'model': 'paragraph', 'title': 'Paragraph', 'class': 'ck-heading_paragraph'},
+                {'model': 'heading1', 'view': 'h1', 'title': 'Headline', 'class': 'ck-heading_heading1'},
+                {'model': 'heading2', 'view': 'h2', 'title': 'Section heading', 'class': 'ck-heading_heading2'},
+                {'model': 'heading3', 'view': 'h3', 'title': 'Subheading', 'class': 'ck-heading_heading3'},
+            ],
+        },
+        'fontSize': {'options': [12, 14, 16, 18, 20, 24, 28, 32, 40, 48]},
+        'image': {
+            'toolbar': [
+                'imageTextAlternative', 'toggleImageCaption', '|',
+                'imageStyle:inline', 'imageStyle:block', 'imageStyle:side',
+            ],
+        },
+        'table': {'contentToolbar': ['tableColumn', 'tableRow', 'mergeTableCells']},
+        'language': 'en',
+    },
+}
 
 
 INTERNAL_IPS = [

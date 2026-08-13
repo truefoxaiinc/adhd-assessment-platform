@@ -138,4 +138,7 @@ whitenoise==6.8.2
 zope.interface==8.5
 django-import-export==4.4.1
 django-unfold==0.91.0
+django-ckeditor-5==0.2.18
+bleach==6.2.0
+tinycss2==1.4.0
 stripe==11.6.0

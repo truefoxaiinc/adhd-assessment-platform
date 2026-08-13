@@ -174,7 +174,14 @@ class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView
                 'estimated_duration_minutes': content.estimated_duration_minutes,
                 'cover_image_url': self.absolute_url(request, content.cover_image),
                 'file_url': self.absolute_url(request, content.file),
-                'article': content.article_body if content.file_type == 'article' else None,
+                'article': (
+                    {
+                        'format': 'html',
+                        'html': content.article_content,
+                    }
+                    if content.file_type == 'article' and content.article_content
+                    else content.article_body if content.file_type == 'article' else None
+                ),
                 'activity_code': content.activity_name,
                 'has_questions': question_count > 0,
                 'question_count': question_count,

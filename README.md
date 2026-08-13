@@ -1098,6 +1098,23 @@ attempt again is idempotent and does not create duplicate answers or progress.
 Day 1 is free; management content from Day 2 onward follows the existing active
 subscription and day-unlock rules.
 
+In Django Admin, choosing `article` as the content type displays the CKEditor 5
+news-style editor and hides video/activity-only inputs. The editor supports
+headings, controlled font sizes and colors, lists, links, tables, quotes, and
+staff-only image uploads. Saved HTML is sanitized by the backend before storage.
+The detail API returns new rich-text articles as:
+
+```json
+{
+  "article": {
+    "format": "html",
+    "html": "<h1>Article headline</h1><p>Article content...</p>"
+  }
+}
+```
+
+Legacy structured JSON articles remain readable during migration.
+
 After deployment, apply the additive migrations:
 
 ```bash

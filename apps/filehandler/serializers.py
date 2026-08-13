@@ -45,9 +45,11 @@ class AdhdContentSerializer(serializers.ModelSerializer):
         uploaded_file = attrs.get("file", getattr(self.instance, "file", None))
 
         if file_type == FileTypeCategory.ARTICLE:
-            if not attrs.get('article_body', getattr(self.instance, 'article_body', None)):
+            article_content = attrs.get('article_content', getattr(self.instance, 'article_content', None))
+            article_body = attrs.get('article_body', getattr(self.instance, 'article_body', None))
+            if not article_content and not article_body:
                 raise serializers.ValidationError({
-                    'article_body': 'This field is required for article content.'
+                    'article_content': 'This field is required for article content.'
                 })
             return attrs
 

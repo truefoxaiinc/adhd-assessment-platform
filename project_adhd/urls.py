@@ -46,6 +46,7 @@ schema_view             = get_schema_view(
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('ckeditor5/', include('django_ckeditor_5.urls')),
     path('', RedirectView.as_view(url='/api/docs'), name='redirect'),
     path('account-deletion/', TemplateView.as_view(template_name='account_deletion.html'), name='account-deletion'),
     path('delete-account/', TemplateView.as_view(template_name='account_deletion.html'), name='delete-account-page'),

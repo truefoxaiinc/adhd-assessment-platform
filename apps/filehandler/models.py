@@ -1,8 +1,11 @@
 import uuid
 
+import bleach
+from bleach.css_sanitizer import CSSSanitizer
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from django_ckeditor_5.fields import CKEditor5Field
 from apps.users.models import Users
 
 class FeedbackReview(models.Model):
@@ -56,6 +59,7 @@ class AdhdContent(models.Model):
     file             = models.FileField(_('File'), upload_to='adhd_content/', blank=True, null=True)
     cover_image      = models.ImageField(_('Cover Image'), upload_to='adhd_content/covers/', blank=True, null=True)
     article_body     = models.JSONField(_('Article Body'), blank=True, null=True)
+    article_content  = CKEditor5Field(_('Article Content'), config_name='article', blank=True)
     is_management    = models.BooleanField(_('Is Management'), default=False, help_text="True for Management files, False for Assessment files")
     age_group        = models.CharField(_('Age Group'), max_length=50, choices=AgeGroupCategory.choices, default=AgeGroupCategory.ADULT)
     day              = models.IntegerField(_('Day'), blank=True, null=True, help_text="Required for management files. e.g. 1 for day-1")
@@ -74,11 +78,11 @@ class AdhdContent(models.Model):
         if self.is_management and not self.day:
             errors['day'] = 'Day is required for management content.'
         if self.file_type == FileTypeCategory.ARTICLE:
-            if not self.article_body:
-                errors['article_body'] = 'Article body is required for article content.'
-            elif not isinstance(self.article_body, dict) or not isinstance(self.article_body.get('blocks'), list):
+            if not self.article_content and not self.article_body:
+                errors['article_content'] = 'Article content is required for article content.'
+            elif self.article_body and (not isinstance(self.article_body, dict) or not isinstance(self.article_body.get('blocks'), list)):
                 errors['article_body'] = 'Article body must be an object containing a blocks list.'
-            else:
+            elif self.article_body:
                 allowed_blocks = {'heading', 'paragraph', 'bullet_list', 'numbered_list', 'image', 'callout', 'quote'}
                 invalid_blocks = [
                     block.get('type')
@@ -87,8 +91,8 @@ class AdhdContent(models.Model):
                 ]
                 if invalid_blocks:
                     errors['article_body'] = f'Unsupported article block types: {invalid_blocks}.'
-        elif self.article_body:
-            errors['article_body'] = 'Article body can only be used with article content.'
+        elif self.article_body or self.article_content:
+            errors['article_content'] = 'Article content can only be used with article content type.'
         if self.file_type == FileTypeCategory.ACTIVITY:
             if not self.activity_name:
                 errors['activity_name'] = 'Activity name is required for activity content.'
@@ -98,6 +102,35 @@ class AdhdContent(models.Model):
             errors['file'] = 'A file is required for video or legacy file content.'
         if errors:
             raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.article_content:
+            self.article_content = bleach.clean(
+                self.article_content,
+                tags={
+                    'p', 'br', 'h1', 'h2', 'h3', 'h4', 'strong', 'em', 'u', 's',
+                    'a', 'ul', 'ol', 'li', 'blockquote', 'figure', 'figcaption',
+                    'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span',
+                    'div', 'mark', 'code', 'pre', 'oembed',
+                },
+                attributes={
+                    '*': ['class', 'style'],
+                    'a': ['href', 'title', 'target', 'rel'],
+                    'img': ['src', 'alt', 'width', 'height'],
+                    'oembed': ['url'],
+                    'th': ['colspan', 'rowspan'],
+                    'td': ['colspan', 'rowspan'],
+                },
+                protocols={'http', 'https', 'mailto'},
+                css_sanitizer=CSSSanitizer(
+                    allowed_css_properties={
+                        'font-size', 'color', 'background-color', 'text-align',
+                        'width', 'height', 'margin', 'margin-left', 'margin-right',
+                    },
+                ),
+                strip=True,
+            )
+        super().save(*args, **kwargs)
 
     def __str__(self):
         phase = "Management" if self.is_management else "Assessment"

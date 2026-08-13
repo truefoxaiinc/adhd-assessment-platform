@@ -23,3 +23,12 @@ class LargeMediaStorage(PublicMediaStorage):
     object_parameters = {
         "CacheControl": "max-age=86400",
     }
+
+
+class ArticleImageStorage(PublicMediaStorage):
+    """Public image storage used by the staff-only article editor."""
+
+    location = f"{settings.AWS_LOCATION}/adhd_content/articles"
+    object_parameters = {
+        "CacheControl": "max-age=31536000, immutable",
+    }

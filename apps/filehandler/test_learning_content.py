@@ -132,6 +132,25 @@ class TestLearningContentApi:
         assert response.data['data']['article']['version'] == 1
         assert response.data['data']['file_url'] is None
 
+    def test_article_detail_returns_sanitized_ckeditor_html(self, api_client, user, article):
+        article.article_content = (
+            '<h1 style="font-size: 40px">Focus News</h1>'
+            '<p><strong>Important</strong></p>'
+            '<script>alert("unsafe")</script>'
+        )
+        article.save()
+        article.refresh_from_db()
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(f'/api/content/v1/contents/{article.id}')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['article']['format'] == 'html'
+        html = response.data['data']['article']['html']
+        assert '<h1 style="font-size: 40px;">Focus News</h1>' in html
+        assert '<strong>Important</strong>' in html
+        assert '<script>' not in html
+
     def test_attempt_questions_hide_correct_answer(self, api_client, user, article):
         api_client.force_authenticate(user=user)
         start = api_client.post(f'/api/content/v1/contents/{article.id}/attempts', {}, format='json')
