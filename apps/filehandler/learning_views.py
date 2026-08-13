@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from apps.filehandler.learning_serializers import (
     ContentAnswerResultSerializer,
     ContentAttemptSerializer,
+    ContentDetailQuestionSerializer,
     PublicContentQuestionSerializer,
     StartAttemptSerializer,
     SubmitAttemptSerializer,
@@ -192,7 +193,7 @@ class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView
                 'has_questions': question_count > 0,
                 'question_count': question_count,
                 'question_mode': content.question_mode if question_count else None,
-                'questions': PublicContentQuestionSerializer(questions, many=True).data,
+                'questions': ContentDetailQuestionSerializer(questions, many=True).data,
                 'is_locked': False,
                 'locked_reason': None,
                 'is_completed': completed is not None,

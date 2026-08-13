@@ -30,6 +30,29 @@ class PublicContentQuestionSerializer(serializers.ModelSerializer):
         ]
 
 
+class ContentDetailQuestionOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionOption
+        fields = ['id', 'option_text', 'display_order', 'is_correct']
+
+
+class ContentDetailQuestionSerializer(serializers.ModelSerializer):
+    options = ContentDetailQuestionOptionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ContentQuestion
+        fields = [
+            'id',
+            'question_text',
+            'question_type',
+            'display_order',
+            'maximum_score',
+            'is_required',
+            'explanation',
+            'options',
+        ]
+
+
 class StartAttemptSerializer(serializers.Serializer):
     pass
 

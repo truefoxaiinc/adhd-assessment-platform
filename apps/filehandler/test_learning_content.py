@@ -139,7 +139,8 @@ class TestLearningContentApi:
         question = response.data['data']['questions'][0]
         assert question['question_text'] == 'What matters?'
         assert len(question['options']) == 2
-        assert 'is_correct' not in question['options'][0]
+        assert question['options'][0]['is_correct'] is True
+        assert question['options'][1]['is_correct'] is False
 
     def test_content_detail_excludes_inactive_questions(self, api_client, user, article):
         ContentQuestion.objects.create(
