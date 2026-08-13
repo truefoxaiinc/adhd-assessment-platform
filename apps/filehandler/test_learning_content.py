@@ -1,4 +1,6 @@
 import pytest
+from django.contrib import admin
+from django.test import RequestFactory
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -9,6 +11,7 @@ from apps.filehandler.models import (
     ContentStatus,
     QuestionOption,
 )
+from apps.filehandler.admin import AdhdContentAdmin
 from apps.progresstracker.models import ProgressTracker, UserAssessmentDetails
 from apps.users.models import Users
 
@@ -224,3 +227,35 @@ class TestLearningContentApi:
 
         assert questions.status_code == status.HTTP_404_NOT_FOUND
         assert submit.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+class TestContentAdminForm:
+    def test_existing_article_only_renders_article_specific_section(self, user, article):
+        user.is_staff = True
+        user.is_superuser = True
+        request = RequestFactory().get(f'/admin/filehandler/adhdcontent/{article.id}/change/')
+        request.user = user
+        model_admin = AdhdContentAdmin(AdhdContent, admin.site)
+
+        fieldsets = model_admin.get_fieldsets(request, article)
+        section_names = [name for name, _options in fieldsets]
+
+        assert 'Article' in section_names
+        assert 'Video or file' not in section_names
+        assert 'Activity' not in section_names
+        assert 'file_type' in model_admin.get_readonly_fields(request, article)
+
+    def test_new_activity_only_renders_activity_specific_section(self, user):
+        user.is_staff = True
+        user.is_superuser = True
+        request = RequestFactory().get('/admin/filehandler/adhdcontent/add/?type=activity')
+        request.user = user
+        model_admin = AdhdContentAdmin(AdhdContent, admin.site)
+
+        fieldsets = model_admin.get_fieldsets(request)
+        section_names = [name for name, _options in fieldsets]
+
+        assert 'Activity' in section_names
+        assert 'Article' not in section_names
+        assert 'Video or file' not in section_names

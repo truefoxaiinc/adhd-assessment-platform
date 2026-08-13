@@ -151,6 +151,7 @@ CKEDITOR_5_FILE_UPLOAD_PERMISSION = 'staff'
 CKEDITOR_5_ALLOW_ALL_FILE_TYPES = False
 CKEDITOR_5_UPLOAD_FILE_TYPES = ['jpg', 'jpeg', 'png', 'gif', 'webp']
 CKEDITOR_5_MAX_FILE_SIZE = 5
+CKEDITOR_5_CUSTOM_CSS = 'filehandler/css/content_admin.css'
 CKEDITOR_5_CONFIGS = {
     'article': {
         'toolbar': {

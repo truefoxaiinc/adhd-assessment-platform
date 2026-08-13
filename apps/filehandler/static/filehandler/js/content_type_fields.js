@@ -1,10 +1,10 @@
 (function () {
     "use strict";
 
-    function setVisible(selector, visible) {
-        document.querySelectorAll(selector).forEach(function (element) {
-            element.style.display = visible ? "" : "none";
-        });
+    function selectedTypeUrl(contentType) {
+        var url = new URL(window.location.href);
+        url.searchParams.set("type", contentType);
+        return url.toString();
     }
 
     function updateContentFields() {
@@ -13,10 +13,21 @@
             return;
         }
 
-        var contentType = typeField.value;
-        setVisible(".article-fields", contentType === "article");
-        setVisible(".file-fields", ["video", "document", "file"].indexOf(contentType) !== -1);
-        setVisible(".activity-fields", contentType === "activity");
+        var renderedType = document.body.dataset.renderedContentType;
+        if (!renderedType) {
+            document.body.dataset.renderedContentType = typeField.value;
+            return;
+        }
+        if (renderedType !== typeField.value) {
+            var confirmed = window.confirm(
+                "Change content type? The form will reload and unsaved values will be cleared."
+            );
+            if (confirmed) {
+                window.location.assign(selectedTypeUrl(typeField.value));
+            } else {
+                typeField.value = renderedType;
+            }
+        }
     }
 
     document.addEventListener("DOMContentLoaded", function () {
@@ -24,6 +35,7 @@
         if (!typeField) {
             return;
         }
+        document.body.dataset.renderedContentType = typeField.value;
         typeField.addEventListener("change", updateContentFields);
         updateContentFields();
     });

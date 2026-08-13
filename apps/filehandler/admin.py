@@ -23,22 +23,59 @@ class AdhdContentAdmin(ModelAdmin):
     date_hierarchy = 'created_at'
     list_per_page = 25
     actions = ('publish_content', 'archive_content')
-    fieldsets = (
-        ('Content', {'fields': ('title', 'description', 'file_type', 'status')}),
-        ('Placement', {'fields': ('is_management', 'age_group', 'day', 'order_number')}),
-        ('Article', {'fields': ('article_content', 'cover_image'), 'classes': ('article-fields',)}),
-        ('Video or file', {'fields': ('file',), 'classes': ('file-fields',)}),
-        ('Activity', {'fields': ('activity_name',), 'classes': ('activity-fields',)}),
-        ('Learning', {'fields': ('estimated_duration_minutes', 'question_mode', 'published_at')}),
+    readonly_fields = ('published_at',)
+    base_fieldsets = (
+        ('Content', {'fields': (('title', 'file_type'), 'description', 'status')}),
+        ('Placement', {'fields': ('is_management', ('age_group', 'day', 'order_number'))}),
+    )
+    learning_fieldset = (
+        'Learning',
+        {'fields': (('estimated_duration_minutes', 'question_mode'), 'published_at')},
     )
 
     def get_changeform_initial_data(self, request):
         initial = super().get_changeform_initial_data(request)
         initial.setdefault('status', ContentStatus.DRAFT)
+        initial.setdefault('file_type', request.GET.get('type', 'article'))
         return initial
+
+    def get_fieldsets(self, request, obj=None):
+        content_type = (
+            request.POST.get('file_type')
+            or request.GET.get('type')
+            or getattr(obj, 'file_type', None)
+            or 'article'
+        )
+        if content_type == 'article':
+            type_fieldset = (
+                'Article',
+                {
+                    'fields': ('article_content', 'cover_image'),
+                    'classes': ('article-fields',),
+                    'description': 'Create the article using headings, text styles, lists, tables, links, and images.',
+                },
+            )
+        elif content_type == 'activity':
+            type_fieldset = (
+                'Activity',
+                {'fields': ('activity_name',), 'classes': ('activity-fields',)},
+            )
+        else:
+            type_fieldset = (
+                'Video or file',
+                {'fields': ('file',), 'classes': ('file-fields',)},
+            )
+        return (*self.base_fieldsets, type_fieldset, self.learning_fieldset)
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(super().get_readonly_fields(request, obj))
+        if obj is not None:
+            readonly.append('file_type')
+        return tuple(readonly)
 
     class Media:
         js = ('filehandler/js/content_type_fields.js',)
+        css = {'all': ('filehandler/css/content_admin.css',)}
 
     @admin.display(description='Phase', ordering='is_management')
     def content_phase(self, obj):
