@@ -7,7 +7,7 @@ from datetime import timedelta
 from apps.users.models import Users
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse
 from services.assessment_result.assessment_result_services import ResultService
-from apps.filehandler.models import AdhdContent
+from apps.filehandler.models import AdhdContent, ContentAttempt
 from apps.progresstracker.models import FaceAttentionSession, ManagementActivitySession, ProgressTracker, UserAssessmentDetails
 from apps.assessment.cache import cache_get, cache_set, get_management_week_details_cache_key
 
@@ -720,6 +720,44 @@ class TestAssessmentViews:
         assert response.data['data']['limit'] == 10
         assert response.data['data']['total_pages'] == 0
         assert response.data['data']['results'] == []
+
+    def test_management_latest_week_includes_completed_content_attempt_score(self, api_client, user):
+        cache.clear()
+        content = AdhdContent.objects.create(
+            title='Focus Article',
+            is_management=True,
+            age_group='adult',
+            file_type='article',
+            day=1,
+            order_number=1,
+        )
+        completed_at = timezone.now()
+        attempt = ContentAttempt.objects.create(
+            user=user,
+            content=content,
+            attempt_number=1,
+            status='completed',
+            score=2,
+            maximum_score=2,
+            percentage=100,
+            passed=True,
+            completed_at=completed_at,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        selected_day = response.data['data']['results'][0]['selected_day']
+        assert selected_day['sessions_count'] == 1
+        session = selected_day['sessions'][0]
+        assert session['attempt_id'] == str(attempt.id)
+        assert session['file_id'] == content.id
+        assert session['content_type'] == 'article'
+        assert session['score'] == 100.0
+        assert session['raw_score'] == 2.0
+        assert session['maximum_score'] == 2.0
+        assert session['passed'] is True
 
     def test_management_latest_week_rejects_invalid_pagination(self, api_client, user):
         api_client.force_authenticate(user=user)

@@ -26,6 +26,7 @@ from apps.assessment.schemas import (
     SelfAssessmentResultSchema,
 )
 from apps.progresstracker.models import FaceAttentionSession, ManagementActivitySession
+from apps.filehandler.models import AttemptStatus, ContentAttempt
 from django.utils import timezone
 from .serializers import (
     FrontendAttentionScoreSerializer,
@@ -477,6 +478,20 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             .order_by('created_at', 'id')
         )
 
+    @staticmethod
+    def _get_user_management_content_attempts(user):
+        return list(
+            ContentAttempt.objects
+            .filter(
+                user=user,
+                status=AttemptStatus.COMPLETED,
+                content__is_management=True,
+            )
+            .select_related('content')
+            .prefetch_related('answers__selected_options')
+            .order_by('completed_at', 'id')
+        )
+
     @classmethod
     def _build_dashboard_data(cls, sessions, weeks_count):
         week_buckets = defaultdict(list)
@@ -517,8 +532,15 @@ class ManagementDashboardApiView(generics.GenericAPIView):
         }
 
     @classmethod
-    def _build_all_week_details(cls, sessions, selected_date=None, activity_sessions=None):
+    def _build_all_week_details(
+        cls,
+        sessions,
+        selected_date=None,
+        activity_sessions=None,
+        content_attempts=None,
+    ):
         activity_sessions = activity_sessions or []
+        content_attempts = content_attempts or []
         week_buckets = defaultdict(list)
         day_buckets = defaultdict(list)
 
@@ -533,6 +555,12 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             week_start = session_date - timedelta(days=session_date.weekday())
             week_buckets[week_start].append(session)
             day_buckets[session_date].append(session)
+
+        for attempt in content_attempts:
+            session_date = timezone.localtime(attempt.completed_at).date()
+            week_start = session_date - timedelta(days=session_date.weekday())
+            week_buckets[week_start].append(attempt)
+            day_buckets[session_date].append(attempt)
 
         return [
             cls._serialize_week_details(
@@ -601,6 +629,8 @@ class ManagementDashboardApiView(generics.GenericAPIView):
 
     @staticmethod
     def _session_score(session):
+        if isinstance(session, ContentAttempt):
+            return round(session.percentage, 2)
         if isinstance(session, ManagementActivitySession):
             return round(session.final_score, 2)
         return round((session.average_concentration_score / 8.0) * 100, 2)
@@ -664,15 +694,65 @@ class ManagementDashboardApiView(generics.GenericAPIView):
 
     @classmethod
     def _serialize_management_session(cls, session):
+        if isinstance(session, ContentAttempt):
+            return cls._serialize_content_attempt(session)
         if isinstance(session, ManagementActivitySession):
             return cls._serialize_activity_session(session)
         return cls._serialize_session(session)
 
     @staticmethod
     def _session_started_at(session):
+        if isinstance(session, ContentAttempt):
+            return session.completed_at or session.started_at
         if isinstance(session, ManagementActivitySession):
             return session.started_at
         return session.created_at
+
+    @classmethod
+    def _serialize_content_attempt(cls, attempt):
+        completed_at = timezone.localtime(attempt.completed_at)
+        started_at = timezone.localtime(attempt.started_at)
+        duration_seconds = max((completed_at - started_at).total_seconds(), 0)
+        content = attempt.content
+
+        return {
+            "id": str(attempt.id),
+            "attempt_id": str(attempt.id),
+            "attempt_number": attempt.attempt_number,
+            "user_id": attempt.user_id,
+            "file": content.id,
+            "file_id": content.id,
+            "file_title": content.title,
+            "content_type": content.file_type,
+            "content_label": content.file_type.upper(),
+            "management_day": content.day,
+            "is_assessment": False,
+            "status": attempt.status,
+            "score": round(attempt.percentage, 2),
+            "final_score": round(attempt.percentage, 2),
+            "raw_score": round(attempt.score, 2),
+            "maximum_score": round(attempt.maximum_score, 2),
+            "percentage": round(attempt.percentage, 2),
+            "passed": attempt.passed,
+            "answers": [
+                {
+                    "question_id": answer.question_id,
+                    "selected_option_ids": [
+                        option.id for option in answer.selected_options.all()
+                    ],
+                    "is_correct": answer.is_correct,
+                    "awarded_score": round(answer.awarded_score, 2),
+                }
+                for answer in attempt.answers.all()
+            ],
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "created_at": started_at.isoformat(),
+            "time_label": completed_at.strftime("%I:%M %p").lstrip("0"),
+            "session_duration_seconds": round(duration_seconds, 2),
+            "duration_seconds": round(duration_seconds, 2),
+            "duration_label": cls._format_duration(duration_seconds),
+        }
 
     @classmethod
     def _serialize_activity_session(cls, session):
@@ -856,10 +936,12 @@ class ManagementLatestWeekApiView(generics.GenericAPIView):
 
             sessions = ManagementDashboardApiView._get_user_management_sessions(request.user)
             activity_sessions = ManagementDashboardApiView._get_user_management_activity_sessions(request.user)
+            content_attempts = ManagementDashboardApiView._get_user_management_content_attempts(request.user)
             week_details = ManagementDashboardApiView._build_all_week_details(
                 sessions,
                 selected_date=selected_date,
                 activity_sessions=activity_sessions,
+                content_attempts=content_attempts,
             )
             paginated_week_details = ManagementDashboardApiView._paginate_week_details(
                 request,
