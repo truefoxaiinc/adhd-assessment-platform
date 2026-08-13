@@ -11,8 +11,9 @@ from apps.filehandler.learning_serializers import (
     ContentAnswerResultSerializer,
     ContentAttemptSerializer,
     ContentDetailQuestionSerializer,
+    DirectContentSubmitSerializer,
+    EmptySerializer,
     PublicContentQuestionSerializer,
-    StartAttemptSerializer,
     SubmitAttemptSerializer,
 )
 from apps.filehandler.learning_services import LearningContentService
@@ -80,7 +81,7 @@ class LearningContentMixin:
 
 
 class LearningContentListApiView(LearningContentMixin, generics.GenericAPIView):
-    serializer_class = StartAttemptSerializer
+    serializer_class = EmptySerializer
     pagination_class = ContentPagination
 
     @swagger_auto_schema(
@@ -155,7 +156,7 @@ class LearningContentListApiView(LearningContentMixin, generics.GenericAPIView):
 
 
 class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView):
-    serializer_class = StartAttemptSerializer
+    serializer_class = EmptySerializer
 
     def get(self, request, content_id):
         try:
@@ -212,15 +213,32 @@ class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView
             return api_response(message='Validation Error', status_code=status.HTTP_404_NOT_FOUND, errors=exc.detail)
 
 
-class StartContentAttemptApiView(LearningContentMixin, generics.GenericAPIView):
-    serializer_class = StartAttemptSerializer
+class SubmitContentAnswersApiView(LearningContentMixin, generics.GenericAPIView):
+    serializer_class = DirectContentSubmitSerializer
 
     def post(self, request, content_id):
+        serializer = self.serializer_class(data=request.data)
+        if not serializer.is_valid():
+            return api_response(
+                message='Validation Error',
+                status_code=status.HTTP_400_BAD_REQUEST,
+                errors=serializer.errors,
+            )
         try:
             content = LearningContentService.accessible_content(content_id, request.user)
             attempt, created = LearningContentService.start_attempt(request.user, content)
+            attempt, submitted = LearningContentService.submit_attempt(
+                request.user,
+                attempt.id,
+                serializer.validated_data['answers'],
+            )
             data = ContentAttemptSerializer(attempt).data
             data['created'] = created
+            data['submitted'] = submitted
+            data['answers'] = ContentAnswerResultSerializer(
+                attempt.answers.prefetch_related('selected_options').order_by('question__display_order'),
+                many=True,
+            ).data
             return api_response(data=data, status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
         except PermissionDenied as exc:
             return api_response(message=str(exc.detail), status_code=status.HTTP_403_FORBIDDEN)

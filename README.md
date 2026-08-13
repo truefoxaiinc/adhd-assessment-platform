@@ -1069,7 +1069,7 @@ supported; new clients should use the endpoints below.
 ```text
 GET  /api/content/v1/contents?section=management&page=1&page_size=20
 GET  /api/content/v1/contents/{content_id}
-POST /api/content/v1/contents/{content_id}/attempts
+POST /api/content/v1/contents/{content_id}/submit
 GET  /api/content/v1/attempts/{attempt_id}/questions
 POST /api/content/v1/attempts/{attempt_id}/submit
 GET  /api/content/v1/contents/{content_id}/attempt-history
@@ -1077,8 +1077,9 @@ GET  /api/content/v1/contents/{content_id}/attempt-history
 
 The list endpoint returns published content for the authenticated user's age
 group, together with lock, subscription, question, and completion metadata. Full
-article blocks are returned only by the detail endpoint. Question responses never
-include answer keys.
+article blocks are returned only by the detail endpoint. The detail response also
+includes questions and answer keys for practice-mode presentation; the legacy
+attempt-question endpoint does not expose answer keys.
 
 Submit answers using option IDs:
 
@@ -1093,8 +1094,10 @@ Submit answers using option IDs:
 }
 ```
 
-Scores and completion are calculated by the backend. Submitting a completed
-attempt again is idempotent and does not create duplicate answers or progress.
+The content submit endpoint creates the attempt, validates multiple answers,
+calculates the score, and updates completion in one request. Submitting a completed
+attempt again through the attempt-ID endpoint is idempotent and does not create
+duplicate answers or progress.
 Day 1 is free; management content from Day 2 onward follows the existing active
 subscription and day-unlock rules.
 

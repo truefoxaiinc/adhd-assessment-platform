@@ -53,10 +53,6 @@ class ContentDetailQuestionSerializer(serializers.ModelSerializer):
         ]
 
 
-class StartAttemptSerializer(serializers.Serializer):
-    pass
-
-
 class SubmittedAnswerSerializer(serializers.Serializer):
     question_id = serializers.IntegerField(min_value=1)
     selected_option_ids = serializers.ListField(
@@ -70,7 +66,11 @@ class SubmittedAnswerSerializer(serializers.Serializer):
         return value
 
 
-class SubmitAttemptSerializer(serializers.Serializer):
+class EmptySerializer(serializers.Serializer):
+    pass
+
+
+class AnswersSerializer(serializers.Serializer):
     answers = SubmittedAnswerSerializer(many=True, required=False, default=list)
 
     def validate_answers(self, value):
@@ -78,6 +78,14 @@ class SubmitAttemptSerializer(serializers.Serializer):
         if len(question_ids) != len(set(question_ids)):
             raise serializers.ValidationError('Each question may be answered only once.')
         return value
+
+
+class DirectContentSubmitSerializer(AnswersSerializer):
+    answers = SubmittedAnswerSerializer(many=True, required=True, allow_empty=False)
+
+
+class SubmitAttemptSerializer(AnswersSerializer):
+    pass
 
 
 class ContentAnswerResultSerializer(serializers.ModelSerializer):

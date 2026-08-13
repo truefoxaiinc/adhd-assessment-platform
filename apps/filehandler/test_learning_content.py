@@ -194,25 +194,23 @@ class TestLearningContentApi:
         assert '<script>' not in html
 
     def test_attempt_questions_hide_correct_answer(self, api_client, user, article):
+        attempt = ContentAttempt.objects.create(user=user, content=article, attempt_number=1)
         api_client.force_authenticate(user=user)
-        start = api_client.post(f'/api/content/v1/contents/{article.id}/attempts', {}, format='json')
-        attempt_id = start.data['data']['id']
 
-        response = api_client.get(f'/api/content/v1/attempts/{attempt_id}/questions')
+        response = api_client.get(f'/api/content/v1/attempts/{attempt.id}/questions')
 
         assert response.status_code == status.HTTP_200_OK
         option = response.data['data']['questions'][0]['options'][0]
         assert 'is_correct' not in option
 
     def test_submit_scores_answers_and_updates_progress(self, api_client, user, article):
+        attempt = ContentAttempt.objects.create(user=user, content=article, attempt_number=1)
         api_client.force_authenticate(user=user)
-        start = api_client.post(f'/api/content/v1/contents/{article.id}/attempts', {}, format='json')
-        attempt_id = start.data['data']['id']
         question = article.questions.get()
         correct_option = question.options.get(is_correct=True)
 
         response = api_client.post(
-            f'/api/content/v1/attempts/{attempt_id}/submit',
+            f'/api/content/v1/attempts/{attempt.id}/submit',
             {'answers': [{'question_id': question.id, 'selected_option_ids': [correct_option.id]}]},
             format='json',
         )
@@ -229,26 +227,88 @@ class TestLearningContentApi:
         assert details.is_day_completed is True
 
         repeat = api_client.post(
-            f'/api/content/v1/attempts/{attempt_id}/submit',
+            f'/api/content/v1/attempts/{attempt.id}/submit',
             {'answers': [{'question_id': question.id, 'selected_option_ids': [correct_option.id]}]},
             format='json',
         )
         assert repeat.status_code == status.HTTP_200_OK
         assert repeat.data['data']['submitted'] is False
-        assert ContentAttempt.objects.get(pk=attempt_id).answers.count() == 1
+        assert ContentAttempt.objects.get(pk=attempt.id).answers.count() == 1
 
-    def test_submit_rejects_missing_required_answer(self, api_client, user, article):
+    def test_content_submit_handles_multiple_questions_in_one_request(self, api_client, user, article):
+        second_question = ContentQuestion.objects.create(
+            content=article,
+            question_text='Which environment helps focus?',
+            question_type='single_choice',
+            display_order=2,
+            maximum_score=1,
+        )
+        second_correct = QuestionOption.objects.create(
+            question=second_question,
+            option_text='A quiet workspace',
+            is_correct=True,
+            display_order=1,
+        )
+        QuestionOption.objects.create(
+            question=second_question,
+            option_text='A distracting workspace',
+            is_correct=False,
+            display_order=2,
+        )
+        first_question = article.questions.get(display_order=1)
+        first_correct = first_question.options.get(is_correct=True)
         api_client.force_authenticate(user=user)
-        start = api_client.post(f'/api/content/v1/contents/{article.id}/attempts', {}, format='json')
 
         response = api_client.post(
-            f"/api/content/v1/attempts/{start.data['data']['id']}/submit",
+            f'/api/content/v1/contents/{article.id}/submit',
+            {
+                'answers': [
+                    {
+                        'question_id': first_question.id,
+                        'selected_option_ids': [first_correct.id],
+                    },
+                    {
+                        'question_id': second_question.id,
+                        'selected_option_ids': [second_correct.id],
+                    },
+                ]
+            },
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['data']['status'] == 'completed'
+        assert response.data['data']['submitted'] is True
+        assert response.data['data']['score'] == 3.0
+        assert response.data['data']['percentage'] == 100.0
+        assert len(response.data['data']['answers']) == 2
+        assert ContentAttempt.objects.filter(user=user, content=article).count() == 1
+
+    def test_submit_rejects_missing_required_answer(self, api_client, user, article):
+        attempt = ContentAttempt.objects.create(user=user, content=article, attempt_number=1)
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            f"/api/content/v1/attempts/{attempt.id}/submit",
             {'answers': []},
             format='json',
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'answers' in response.data['errors']
+
+    def test_content_submit_requires_answers(self, api_client, user, article):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            f'/api/content/v1/contents/{article.id}/submit',
+            {},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'answers' in response.data['errors']
+        assert not ContentAttempt.objects.filter(user=user, content=article).exists()
 
     def test_user_cannot_access_another_users_attempt(self, api_client, user, article):
         other_user = Users.objects.create_user(
