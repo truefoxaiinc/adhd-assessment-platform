@@ -170,8 +170,14 @@ class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView
             completed = ContentAttempt.objects.filter(
                 user=request.user, content=content, status=AttemptStatus.COMPLETED
             ).order_by('-completed_at').first()
+            active_attempt = ContentAttempt.objects.filter(
+                user=request.user,
+                content=content,
+                status=AttemptStatus.IN_PROGRESS,
+            ).order_by('-started_at').first()
             data = {
                 'id': content.id,
+                'attempt_id': str(active_attempt.id) if active_attempt else None,
                 'title': content.title,
                 'description': content.description,
                 'content_type': content.file_type,

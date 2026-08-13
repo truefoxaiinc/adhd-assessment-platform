@@ -132,6 +132,7 @@ class TestLearningContentApi:
         response = api_client.get(f'/api/content/v1/contents/{article.id}')
 
         assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['attempt_id'] is None
         assert response.data['data']['article']['version'] == 1
         assert response.data['data']['file_url'] is None
         assert response.data['data']['question_count'] == 1
@@ -141,6 +142,19 @@ class TestLearningContentApi:
         assert len(question['options']) == 2
         assert question['options'][0]['is_correct'] is True
         assert question['options'][1]['is_correct'] is False
+
+    def test_content_detail_returns_existing_in_progress_attempt_id(self, api_client, user, article):
+        attempt = ContentAttempt.objects.create(
+            user=user,
+            content=article,
+            attempt_number=1,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(f'/api/content/v1/contents/{article.id}')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['attempt_id'] == str(attempt.id)
 
     def test_content_detail_excludes_inactive_questions(self, api_client, user, article):
         ContentQuestion.objects.create(
