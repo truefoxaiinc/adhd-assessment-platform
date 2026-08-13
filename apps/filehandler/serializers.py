@@ -17,7 +17,19 @@ class AdhdContentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AdhdContent
-        fields = "__all__"
+        fields = [
+            'id',
+            'title',
+            'file',
+            'is_management',
+            'age_group',
+            'day',
+            'file_type',
+            'activity_name',
+            'order_number',
+            'created_at',
+            'is_locked',
+        ]
 
     def get_is_locked(self, obj):
         unlocked_days = self.context.get("unlocked_days", [])
@@ -31,6 +43,13 @@ class AdhdContentSerializer(serializers.ModelSerializer):
         file_type = attrs.get("file_type", getattr(self.instance, "file_type", None))
         activity_name = attrs.get("activity_name", getattr(self.instance, "activity_name", None))
         uploaded_file = attrs.get("file", getattr(self.instance, "file", None))
+
+        if file_type == FileTypeCategory.ARTICLE:
+            if not attrs.get('article_body', getattr(self.instance, 'article_body', None)):
+                raise serializers.ValidationError({
+                    'article_body': 'This field is required for article content.'
+                })
+            return attrs
 
         if file_type == FileTypeCategory.ACTIVITY:
             if not activity_name:
@@ -57,7 +76,7 @@ class UpdateLearningProgressSerializer(serializers.Serializer):
         required=False,
         allow_null=False,
     )
-    filetype = serializers.ChoiceField(choices=["video", "file", "document", "activity"], required=False)
+    filetype = serializers.ChoiceField(choices=["article", "video", "file", "document", "activity"], required=False)
     day_completed = serializers.IntegerField(required=False, min_value=1)
     order_number = serializers.IntegerField(required=False, min_value=1)
 

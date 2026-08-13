@@ -83,6 +83,7 @@ class UserAssessmentDetails(models.Model):
         db_table              = 'UserAssessmentDetails'
 
 class FILE_TYPE_CHOICES(models.TextChoices):
+    ARTICLE  = 'article', _('Article')
     VIDEO    = 'video', _('Video')
     FILE     = 'file', _('File')
     DOCUMENT = 'document', _('Document')

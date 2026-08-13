@@ -57,6 +57,7 @@ urlpatterns = [
         path('assessment/',include('apps.assessment.urls')),
         path('websocket/',include('apps.websocket.urls')),
         path('filehandler/',include('apps.filehandler.urls')),
+        path('content/', include('apps.filehandler.content_urls')),
         path('articles/',include('apps.articles.urls')),
         path('payments/',include('apps.payments.urls')),
         path('notifications/',include('apps.notifications.urls')),

@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from apps.filehandler.services.files_services import FilesActions
-from .models import AdhdContent
+from .models import AdhdContent, ContentStatus
 import os,boto3
 import mimetypes
 from django.conf import settings
@@ -104,6 +104,7 @@ class ListAllFiles(APIView):
                 .filter(
                     is_management=is_management,
                     age_group=age_group,
+                    status=ContentStatus.PUBLISHED,
                 )
                 .order_by("day", "file_type", "order_number")
             )
