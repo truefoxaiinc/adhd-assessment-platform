@@ -34,7 +34,7 @@ def dashboard_callback(request, context):
         {
             "label": "Content assets",
             "value": AdhdContent.objects.count(),
-            "caption": "Videos, documents, and files",
+            "caption": "Articles, videos, and activities",
             "icon": "folder_open",
             "url": reverse("admin:filehandler_adhdcontent_changelist"),
         },
@@ -78,7 +78,7 @@ def dashboard_callback(request, context):
             "url": reverse("admin:assessment_selfassessmentquestions_add"),
         },
         {
-            "label": "Upload ADHD content",
+            "label": "Add ADHD content",
             "icon": "upload_file",
             "url": reverse("admin:filehandler_adhdcontent_add"),
         },

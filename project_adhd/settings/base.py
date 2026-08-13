@@ -15,6 +15,7 @@ from dotenv import load_dotenv, find_dotenv
 import datetime
 from decouple import config
 from django.urls import reverse_lazy
+from django.templatetags.static import static
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ImproperlyConfigured
 
@@ -213,6 +214,8 @@ UNFOLD = {
     "SHOW_VIEW_ON_SITE": False,
     "BORDER_RADIUS": "8px",
     "DASHBOARD_CALLBACK": "project_adhd.admin_dashboard.dashboard_callback",
+    "STYLES": [lambda request: static("admin/css/attention_admin.css")],
+    "SCRIPTS": [lambda request: static("admin/js/attention_admin.js")],
     "SIDEBAR": {
         "show_search": True,
         "show_all_applications": True,
@@ -277,6 +280,32 @@ UNFOLD = {
                         "title": _("Feedback"),
                         "icon": "reviews",
                         "link": reverse_lazy("admin:filehandler_feedbackreview_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _("Commerce & Delivery"),
+                "separator": True,
+                "items": [
+                    {
+                        "title": _("Subscriptions"),
+                        "icon": "workspace_premium",
+                        "link": reverse_lazy("admin:payments_subscriptionentitlement_changelist"),
+                    },
+                    {
+                        "title": _("Store Purchases"),
+                        "icon": "payments",
+                        "link": reverse_lazy("admin:payments_storepurchase_changelist"),
+                    },
+                    {
+                        "title": _("Push Devices"),
+                        "icon": "devices",
+                        "link": reverse_lazy("admin:notifications_pushdevice_changelist"),
+                    },
+                    {
+                        "title": _("Notifications"),
+                        "icon": "notifications_active",
+                        "link": reverse_lazy("admin:notifications_programnotification_changelist"),
                     },
                 ],
             },

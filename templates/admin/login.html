@@ -9,15 +9,11 @@
     <style>
         .minder-login-body {
             min-height: 100vh;
-            background:
-                radial-gradient(circle at 12% 18%, rgba(45, 125, 130, 0.14), transparent 32%),
-                linear-gradient(135deg, #f7fafc 0%, #eef5f5 48%, #fff8ed 100%);
+            background: #f4f7f8;
         }
 
         html.dark .minder-login-body {
-            background:
-                radial-gradient(circle at 12% 18%, rgba(62, 169, 174, 0.16), transparent 32%),
-                linear-gradient(135deg, #0f172a 0%, #111827 52%, #18212f 100%);
+            background: #111827;
         }
 
         .minder-login {
@@ -32,9 +28,7 @@
             justify-content: space-between;
             padding: 56px;
             color: #ffffff;
-            background:
-                linear-gradient(140deg, rgba(18, 50, 58, 0.96), rgba(22, 95, 99, 0.93)),
-                #12323a;
+            background: #12323a;
         }
 
         .minder-login__mark {
@@ -66,7 +60,7 @@
         .minder-login__title {
             margin: 0;
             color: #ffffff;
-            font-size: clamp(34px, 4vw, 58px);
+            font-size: 48px;
             font-weight: 780;
             letter-spacing: 0;
             line-height: 1.06;
@@ -175,16 +169,34 @@
             }
 
             .minder-login__brand {
-                min-height: 360px;
+                min-height: 320px;
                 padding: 36px 28px;
             }
 
             .minder-login__stats {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .minder-login__title {
+                font-size: 38px;
             }
         }
 
         @media (max-width: 560px) {
+            .minder-login__brand {
+                min-height: auto;
+                gap: 28px;
+                padding: 28px 20px;
+            }
+
+            .minder-login__title {
+                font-size: 30px;
+            }
+
+            .minder-login__stats {
+                display: none;
+            }
+
             .minder-login__panel-wrap {
                 padding: 18px;
             }

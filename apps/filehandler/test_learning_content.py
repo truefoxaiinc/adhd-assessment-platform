@@ -134,6 +134,30 @@ class TestLearningContentApi:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['data']['article']['version'] == 1
         assert response.data['data']['file_url'] is None
+        assert response.data['data']['question_count'] == 1
+        assert len(response.data['data']['questions']) == 1
+        question = response.data['data']['questions'][0]
+        assert question['question_text'] == 'What matters?'
+        assert len(question['options']) == 2
+        assert 'is_correct' not in question['options'][0]
+
+    def test_content_detail_excludes_inactive_questions(self, api_client, user, article):
+        ContentQuestion.objects.create(
+            content=article,
+            question_text='Hidden draft question',
+            question_type='single_choice',
+            display_order=2,
+            is_active=False,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(f'/api/content/v1/contents/{article.id}')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['question_count'] == 1
+        assert [question['question_text'] for question in response.data['data']['questions']] == [
+            'What matters?'
+        ]
 
     def test_article_detail_returns_sanitized_ckeditor_html(self, api_client, user, article):
         article.article_content = (

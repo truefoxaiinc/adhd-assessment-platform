@@ -159,7 +159,13 @@ class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView
     def get(self, request, content_id):
         try:
             content = LearningContentService.accessible_content(content_id, request.user)
-            question_count = content.questions.filter(is_active=True).count()
+            questions = list(
+                content.questions
+                .filter(is_active=True)
+                .prefetch_related('options')
+                .order_by('display_order', 'id')
+            )
+            question_count = len(questions)
             completed = ContentAttempt.objects.filter(
                 user=request.user, content=content, status=AttemptStatus.COMPLETED
             ).order_by('-completed_at').first()
@@ -186,6 +192,7 @@ class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView
                 'has_questions': question_count > 0,
                 'question_count': question_count,
                 'question_mode': content.question_mode if question_count else None,
+                'questions': PublicContentQuestionSerializer(questions, many=True).data,
                 'is_locked': False,
                 'locked_reason': None,
                 'is_completed': completed is not None,

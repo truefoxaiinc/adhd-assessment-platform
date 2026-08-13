@@ -11,6 +11,7 @@ __pycache__/
 
 # SQLite database
 db.sqlite3
+test.sqlite3
 
 # Media files
 media/
