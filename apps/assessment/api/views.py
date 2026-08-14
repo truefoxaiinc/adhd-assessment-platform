@@ -487,7 +487,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
                 status=AttemptStatus.COMPLETED,
                 content__is_management=True,
             )
-            .select_related('content')
+            .select_related('content', 'attention_session')
             .prefetch_related('answers__selected_options')
             .order_by('completed_at', 'id')
         )
@@ -585,6 +585,21 @@ class ManagementDashboardApiView(generics.GenericAPIView):
 
         for attempt in content_attempts:
             attempt_time = timezone.localtime(attempt.completed_at)
+            if attempt.attention_session_id is not None:
+                matched_session = next(
+                    (
+                        session
+                        for session in sessions
+                        if session.id == attempt.attention_session_id
+                    ),
+                    None,
+                )
+                if matched_session is not None:
+                    matched_session._content_attempt = attempt
+                    used_session_ids.add(matched_session.id)
+                    matched_attempt_ids.add(attempt.id)
+                    continue
+
             candidates = [
                 session
                 for session in sessions

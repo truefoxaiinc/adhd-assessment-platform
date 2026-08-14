@@ -81,6 +81,7 @@ class AnswersSerializer(serializers.Serializer):
 
 
 class DirectContentSubmitSerializer(AnswersSerializer):
+    face_attention_session_id = serializers.IntegerField(min_value=1, required=True)
     answers = SubmittedAnswerSerializer(many=True, required=True, allow_empty=False)
 
 
@@ -102,12 +103,17 @@ class ContentAnswerResultSerializer(serializers.ModelSerializer):
 
 class ContentAttemptSerializer(serializers.ModelSerializer):
     content_id = serializers.IntegerField(read_only=True)
+    face_attention_session_id = serializers.IntegerField(
+        source='attention_session_id',
+        read_only=True,
+    )
 
     class Meta:
         model = ContentAttempt
         fields = [
             'id',
             'content_id',
+            'face_attention_session_id',
             'attempt_number',
             'status',
             'score',

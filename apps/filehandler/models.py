@@ -202,6 +202,13 @@ class ContentAttempt(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='content_attempts')
     content = models.ForeignKey(AdhdContent, on_delete=models.PROTECT, related_name='attempts')
+    attention_session = models.OneToOneField(
+        'progresstracker.FaceAttentionSession',
+        on_delete=models.SET_NULL,
+        related_name='question_attempt',
+        blank=True,
+        null=True,
+    )
     attempt_number = models.PositiveIntegerField()
     status = models.CharField(max_length=20, choices=AttemptStatus.choices, default=AttemptStatus.IN_PROGRESS)
     score = models.FloatField(default=0.0)

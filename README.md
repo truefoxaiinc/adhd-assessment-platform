@@ -1085,6 +1085,7 @@ Submit answers using option IDs:
 
 ```json
 {
+  "face_attention_session_id": 13800,
   "answers": [
     {
       "question_id": 10,
@@ -1094,8 +1095,9 @@ Submit answers using option IDs:
 }
 ```
 
-The content submit endpoint creates the attempt, validates multiple answers,
-calculates the score, and updates completion in one request. Submitting a completed
+The content submit endpoint links the result to the authenticated user's matching
+FaceAttentionSession, creates the attempt, validates multiple answers, calculates
+the score, and updates completion in one request. Submitting a completed
 attempt again through the attempt-ID endpoint is idempotent and does not create
 duplicate answers or progress.
 Day 1 is free; management content from Day 2 onward follows the existing active

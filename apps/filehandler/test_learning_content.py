@@ -12,7 +12,7 @@ from apps.filehandler.models import (
     QuestionOption,
 )
 from apps.filehandler.admin import AdhdContentAdmin
-from apps.progresstracker.models import ProgressTracker, UserAssessmentDetails
+from apps.progresstracker.models import FaceAttentionSession, ProgressTracker, UserAssessmentDetails
 from apps.users.models import Users
 
 
@@ -257,11 +257,19 @@ class TestLearningContentApi:
         )
         first_question = article.questions.get(display_order=1)
         first_correct = first_question.options.get(is_correct=True)
+        attention_session = FaceAttentionSession.objects.create(
+            user=user,
+            file=article,
+            session_id='multiple-question-session',
+            is_assessment=False,
+            concentration_score=0,
+        )
         api_client.force_authenticate(user=user)
 
         response = api_client.post(
             f'/api/content/v1/contents/{article.id}/submit',
             {
+                'face_attention_session_id': attention_session.id,
                 'answers': [
                     {
                         'question_id': first_question.id,
@@ -282,6 +290,7 @@ class TestLearningContentApi:
         assert response.data['data']['score'] == 3.0
         assert response.data['data']['percentage'] == 100.0
         assert len(response.data['data']['answers']) == 2
+        assert response.data['data']['face_attention_session_id'] == attention_session.id
         assert ContentAttempt.objects.filter(user=user, content=article).count() == 1
 
     def test_submit_rejects_missing_required_answer(self, api_client, user, article):
@@ -313,7 +322,15 @@ class TestLearningContentApi:
     def test_content_submit_rejects_duplicate_completed_answer(self, api_client, user, article):
         question = article.questions.get()
         correct_option = question.options.get(is_correct=True)
+        attention_session = FaceAttentionSession.objects.create(
+            user=user,
+            file=article,
+            session_id='duplicate-submit-session',
+            is_assessment=False,
+            concentration_score=0,
+        )
         payload = {
+            'face_attention_session_id': attention_session.id,
             'answers': [
                 {
                     'question_id': question.id,
@@ -340,6 +357,42 @@ class TestLearningContentApi:
             'You have already submitted answers for this content.'
         )
         assert ContentAttempt.objects.filter(user=user, content=article).count() == 1
+
+    def test_content_submit_rejects_another_users_attention_session(self, api_client, user, article):
+        other_user = Users.objects.create_user(
+            username='attention_owner',
+            email='attention_owner@test.com',
+            password='Password123!',
+            dob='1990-01-01',
+        )
+        attention_session = FaceAttentionSession.objects.create(
+            user=other_user,
+            file=article,
+            session_id='other-user-attention-session',
+            is_assessment=False,
+            concentration_score=0,
+        )
+        question = article.questions.get()
+        option = question.options.get(is_correct=True)
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            f'/api/content/v1/contents/{article.id}/submit',
+            {
+                'face_attention_session_id': attention_session.id,
+                'answers': [
+                    {
+                        'question_id': question.id,
+                        'selected_option_ids': [option.id],
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'face_attention_session_id' in response.data['errors']
+        assert not ContentAttempt.objects.filter(user=user, content=article).exists()
 
     def test_user_cannot_access_another_users_attempt(self, api_client, user, article):
         other_user = Users.objects.create_user(

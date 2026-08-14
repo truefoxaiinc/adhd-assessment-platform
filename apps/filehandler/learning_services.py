@@ -12,7 +12,7 @@ from apps.filehandler.models import (
     QuestionType,
 )
 from apps.payments.selectors import user_has_active_subscription
-from apps.progresstracker.models import ProgressTracker, UserAssessmentDetails
+from apps.progresstracker.models import FaceAttentionSession, ProgressTracker, UserAssessmentDetails
 from apps.progresstracker.services.track_services import ProgressTrackerActions
 
 
@@ -109,7 +109,7 @@ class LearningContentService:
         return attempt, True
 
     @classmethod
-    def submit_content_once(cls, user, content, submitted_answers):
+    def submit_content_once(cls, user, content, attention_session_id, submitted_answers):
         with transaction.atomic():
             locked_content = AdhdContent.objects.select_for_update().get(pk=content.pk)
             if ContentAttempt.objects.filter(
@@ -121,7 +121,31 @@ class LearningContentService:
                     'content_id': 'You have already submitted answers for this content.'
                 })
 
+            attention_session = (
+                FaceAttentionSession.objects
+                .select_for_update()
+                .filter(
+                    pk=attention_session_id,
+                    user=user,
+                    file=locked_content,
+                    is_assessment=False,
+                )
+                .first()
+            )
+            if attention_session is None:
+                raise ValidationError({
+                    'face_attention_session_id': (
+                        'Attention session does not exist or does not belong to this user and content.'
+                    )
+                })
+            if ContentAttempt.objects.filter(attention_session=attention_session).exists():
+                raise ValidationError({
+                    'face_attention_session_id': 'This attention session already has a question result.'
+                })
+
             attempt, created = cls.start_attempt(user, locked_content)
+            attempt.attention_session = attention_session
+            attempt.save(update_fields=['attention_session'])
             attempt, submitted = cls.submit_attempt(
                 user,
                 attempt.id,

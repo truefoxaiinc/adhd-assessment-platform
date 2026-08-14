@@ -793,9 +793,19 @@ class TestAssessmentViews:
             display_order=2,
         )
         completed_at = timezone.now()
+        attention_session = FaceAttentionSession.objects.create(
+            user=user,
+            file=content,
+            session_id='merged-content-session',
+            is_assessment=False,
+            final_score=52,
+            concentration_score=4.16,
+            average_concentration_score=4.16,
+        )
         attempt = ContentAttempt.objects.create(
             user=user,
             content=content,
+            attention_session=attention_session,
             attempt_number=1,
             status='completed',
             score=1,
@@ -811,15 +821,6 @@ class TestAssessmentViews:
             awarded_score=1,
         )
         answer.selected_options.add(option)
-        attention_session = FaceAttentionSession.objects.create(
-            user=user,
-            file=content,
-            session_id='merged-content-session',
-            is_assessment=False,
-            final_score=52,
-            concentration_score=4.16,
-            average_concentration_score=4.16,
-        )
         api_client.force_authenticate(user=user)
 
         response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
