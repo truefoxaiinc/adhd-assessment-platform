@@ -109,6 +109,27 @@ class LearningContentService:
         return attempt, True
 
     @classmethod
+    def submit_content_once(cls, user, content, submitted_answers):
+        with transaction.atomic():
+            locked_content = AdhdContent.objects.select_for_update().get(pk=content.pk)
+            if ContentAttempt.objects.filter(
+                user=user,
+                content=locked_content,
+                status=AttemptStatus.COMPLETED,
+            ).exists():
+                raise ValidationError({
+                    'content_id': 'You have already submitted answers for this content.'
+                })
+
+            attempt, created = cls.start_attempt(user, locked_content)
+            attempt, submitted = cls.submit_attempt(
+                user,
+                attempt.id,
+                submitted_answers,
+            )
+            return attempt, created, submitted
+
+    @classmethod
     def submit_attempt(cls, user, attempt_id, submitted_answers):
         with transaction.atomic():
             attempt = (

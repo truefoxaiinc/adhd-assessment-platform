@@ -310,6 +310,37 @@ class TestLearningContentApi:
         assert 'answers' in response.data['errors']
         assert not ContentAttempt.objects.filter(user=user, content=article).exists()
 
+    def test_content_submit_rejects_duplicate_completed_answer(self, api_client, user, article):
+        question = article.questions.get()
+        correct_option = question.options.get(is_correct=True)
+        payload = {
+            'answers': [
+                {
+                    'question_id': question.id,
+                    'selected_option_ids': [correct_option.id],
+                }
+            ]
+        }
+        api_client.force_authenticate(user=user)
+
+        first_response = api_client.post(
+            f'/api/content/v1/contents/{article.id}/submit',
+            payload,
+            format='json',
+        )
+        duplicate_response = api_client.post(
+            f'/api/content/v1/contents/{article.id}/submit',
+            payload,
+            format='json',
+        )
+
+        assert first_response.status_code == status.HTTP_201_CREATED
+        assert duplicate_response.status_code == status.HTTP_400_BAD_REQUEST
+        assert duplicate_response.data['errors']['content_id'] == (
+            'You have already submitted answers for this content.'
+        )
+        assert ContentAttempt.objects.filter(user=user, content=article).count() == 1
+
     def test_user_cannot_access_another_users_attempt(self, api_client, user, article):
         other_user = Users.objects.create_user(
             username='other_learning_user',

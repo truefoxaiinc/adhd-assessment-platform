@@ -226,10 +226,9 @@ class SubmitContentAnswersApiView(LearningContentMixin, generics.GenericAPIView)
             )
         try:
             content = LearningContentService.accessible_content(content_id, request.user)
-            attempt, created = LearningContentService.start_attempt(request.user, content)
-            attempt, submitted = LearningContentService.submit_attempt(
+            attempt, created, submitted = LearningContentService.submit_content_once(
                 request.user,
-                attempt.id,
+                content,
                 serializer.validated_data['answers'],
             )
             data = ContentAttemptSerializer(attempt).data
