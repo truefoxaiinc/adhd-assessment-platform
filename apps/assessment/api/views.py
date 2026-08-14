@@ -556,7 +556,13 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             week_buckets[week_start].append(session)
             day_buckets[session_date].append(session)
 
+        matched_attempt_ids = cls._attach_content_attempts_to_attention_sessions(
+            sessions,
+            content_attempts,
+        )
         for attempt in content_attempts:
+            if attempt.id in matched_attempt_ids:
+                continue
             session_date = timezone.localtime(attempt.completed_at).date()
             week_start = session_date - timedelta(days=session_date.weekday())
             week_buckets[week_start].append(attempt)
@@ -571,6 +577,35 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             )
             for index, week_start in enumerate(sorted(week_buckets.keys()))
         ]
+
+    @staticmethod
+    def _attach_content_attempts_to_attention_sessions(sessions, content_attempts):
+        matched_attempt_ids = set()
+        used_session_ids = set()
+
+        for attempt in content_attempts:
+            attempt_time = timezone.localtime(attempt.completed_at)
+            candidates = [
+                session
+                for session in sessions
+                if session.id not in used_session_ids
+                and session.file_id == attempt.content_id
+                and timezone.localtime(session.created_at).date() == attempt_time.date()
+            ]
+            if not candidates:
+                continue
+
+            matched_session = min(
+                candidates,
+                key=lambda session: abs(
+                    (timezone.localtime(session.created_at) - attempt_time).total_seconds()
+                ),
+            )
+            matched_session._content_attempt = attempt
+            used_session_ids.add(matched_session.id)
+            matched_attempt_ids.add(attempt.id)
+
+        return matched_attempt_ids
 
     @staticmethod
     def _get_selected_date(request):
@@ -807,7 +842,7 @@ class ManagementDashboardApiView(generics.GenericAPIView):
         content_type = session.content_type or (content.file_type if content else "")
         score = session.final_score or cls._session_score(session)
 
-        return {
+        data = {
             "id": session.id,
             "user_id": session.user_id,
             "file": content.id if content else None,
@@ -855,6 +890,32 @@ class ManagementDashboardApiView(generics.GenericAPIView):
             "time_label": local_created_at.strftime("%I:%M %p").lstrip("0"),
             "duration_seconds": round(session.session_duration_seconds, 2),
             "duration_label": cls._format_duration(session.session_duration_seconds),
+        }
+        attempt = getattr(session, '_content_attempt', None)
+        if attempt is not None:
+            data.update(cls._serialize_attempt_result(attempt))
+        return data
+
+    @staticmethod
+    def _serialize_attempt_result(attempt):
+        return {
+            "attempt_id": str(attempt.id),
+            "attempt_number": attempt.attempt_number,
+            "question_score": round(attempt.score, 2),
+            "question_maximum_score": round(attempt.maximum_score, 2),
+            "question_percentage": round(attempt.percentage, 2),
+            "question_passed": attempt.passed,
+            "answers": [
+                {
+                    "question_id": answer.question_id,
+                    "selected_option_ids": [
+                        option.id for option in answer.selected_options.all()
+                    ],
+                    "is_correct": answer.is_correct,
+                    "awarded_score": round(answer.awarded_score, 2),
+                }
+                for answer in attempt.answers.all()
+            ],
         }
 
     @staticmethod

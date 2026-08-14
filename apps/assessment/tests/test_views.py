@@ -7,7 +7,13 @@ from datetime import timedelta
 from apps.users.models import Users
 from apps.assessment.models import SelfAssessmentQuestions, SelfAssessmentResult, SelfAssessmentResponse
 from services.assessment_result.assessment_result_services import ResultService
-from apps.filehandler.models import AdhdContent, ContentAttempt
+from apps.filehandler.models import (
+    AdhdContent,
+    ContentAnswer,
+    ContentAttempt,
+    ContentQuestion,
+    QuestionOption,
+)
 from apps.progresstracker.models import FaceAttentionSession, ManagementActivitySession, ProgressTracker, UserAssessmentDetails
 from apps.assessment.cache import cache_get, cache_set, get_management_week_details_cache_key
 
@@ -758,6 +764,84 @@ class TestAssessmentViews:
         assert session['raw_score'] == 2.0
         assert session['maximum_score'] == 2.0
         assert session['passed'] is True
+
+    def test_management_latest_week_merges_attempt_into_attention_session(self, api_client, user):
+        cache.clear()
+        content = AdhdContent.objects.create(
+            title='Focus Article',
+            is_management=True,
+            age_group='adult',
+            file_type='article',
+            day=1,
+            order_number=1,
+        )
+        question = ContentQuestion.objects.create(
+            content=content,
+            question_text='What improves focus?',
+            display_order=1,
+        )
+        option = QuestionOption.objects.create(
+            question=question,
+            option_text='A quiet workspace',
+            is_correct=True,
+            display_order=1,
+        )
+        QuestionOption.objects.create(
+            question=question,
+            option_text='More distractions',
+            is_correct=False,
+            display_order=2,
+        )
+        completed_at = timezone.now()
+        attempt = ContentAttempt.objects.create(
+            user=user,
+            content=content,
+            attempt_number=1,
+            status='completed',
+            score=1,
+            maximum_score=1,
+            percentage=100,
+            passed=True,
+            completed_at=completed_at,
+        )
+        answer = ContentAnswer.objects.create(
+            attempt=attempt,
+            question=question,
+            is_correct=True,
+            awarded_score=1,
+        )
+        answer.selected_options.add(option)
+        attention_session = FaceAttentionSession.objects.create(
+            user=user,
+            file=content,
+            session_id='merged-content-session',
+            is_assessment=False,
+            final_score=52,
+            concentration_score=4.16,
+            average_concentration_score=4.16,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.MANAGEMENT_LATEST_WEEK_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        selected_day = response.data['data']['results'][0]['selected_day']
+        assert selected_day['sessions_count'] == 1
+        session = selected_day['sessions'][0]
+        assert session['id'] == attention_session.id
+        assert session['score'] == 52.0
+        assert session['attempt_id'] == str(attempt.id)
+        assert session['question_score'] == 1.0
+        assert session['question_percentage'] == 100.0
+        assert session['question_passed'] is True
+        assert session['answers'] == [
+            {
+                'question_id': question.id,
+                'selected_option_ids': [option.id],
+                'is_correct': True,
+                'awarded_score': 1.0,
+            }
+        ]
 
     def test_management_latest_week_rejects_invalid_pagination(self, api_client, user):
         api_client.force_authenticate(user=user)
