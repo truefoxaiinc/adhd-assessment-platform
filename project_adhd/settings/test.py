@@ -1,7 +1,12 @@
+import os
+
+os.environ.setdefault('DJANGO_ENV', 'test')
+
 from project_adhd.settings.base import *  # noqa: F401,F403
 
 DEBUG = False
 FIREBASE_INITIALIZE = False
+FIREBASE_CREDENTIALS_PATH = ''
 if config('USE_SQLITE_FOR_TESTS', default=False, cast=bool):
     DATABASES = {
         'default': {

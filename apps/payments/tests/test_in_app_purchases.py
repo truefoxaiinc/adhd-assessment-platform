@@ -1,3 +1,5 @@
+import uuid
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -6,10 +8,17 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
 from googleapiclient.errors import HttpError
 from httplib2 import Response as HttpResponse
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
 from apps.payments.models import EntitlementStatus, StorePlatform, StorePurchase, SubscriptionEntitlement
-from apps.payments.services import _google_service, save_verified_purchase, verify_google_purchase
+from apps.payments.services import (
+    _apple_api_signed_transaction,
+    _google_service,
+    save_verified_purchase,
+    verify_apple_purchase,
+    verify_google_purchase,
+)
 from apps.users.models import Users
 
 
@@ -97,6 +106,156 @@ def test_android_verification_returns_entitlement(authed_client, user):
     assert response.data['data']['subscription_status'] == 'active'
     assert StorePurchase.objects.get().user == user
     assert SubscriptionEntitlement.objects.get(user=user).is_active is True
+
+
+def _apple_decoded_transaction(user, **overrides):
+    now = timezone.now()
+    app_account_token = str(uuid.uuid5(uuid.NAMESPACE_URL, f'{"attentionminder.trufoxai.com"}:{user.pk}'))
+    payload = {
+        'productId': 'attentionminder.monthly',
+        'bundleId': 'attentionminder.trufoxai.com',
+        'purchaseDate': (now - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'expiresDate': (now + timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'transactionId': 'apple-transaction-123',
+        'originalTransactionId': 'apple-original-123',
+        'appAccountToken': app_account_token,
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_production_verification_returns_entitlement(user):
+    decoded = _apple_decoded_transaction(user)
+    with patch('apps.payments.services._verify_apple_jws', return_value=(decoded, 'production')):
+        result = verify_apple_purchase(user, {
+            'platform': 'ios',
+            'product_id': 'attentionminder.monthly',
+            'transaction_id': 'apple-transaction-123',
+            'verification_data': 'eyJhbGciOiJFUzI1NiJ9.abc.def',
+        })
+
+    assert result['platform'] == StorePlatform.IOS
+    assert result['status'] == EntitlementStatus.ACTIVE
+    assert result['environment'] == 'production'
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_sandbox_verification_uses_sandbox_environment(user):
+    decoded = _apple_decoded_transaction(user)
+    with patch('apps.payments.services._verify_apple_jws', return_value=(decoded, 'sandbox')):
+        result = verify_apple_purchase(user, {
+            'platform': 'ios',
+            'product_id': 'attentionminder.monthly',
+            'transaction_id': 'apple-transaction-456',
+            'verification_data': 'eyJhbGciOiJFUzI1NiJ9.abc.def',
+        })
+
+    assert result['environment'] == 'sandbox'
+    assert result['status'] == EntitlementStatus.ACTIVE
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_transaction_lookup_is_used_when_verification_data_missing(user):
+    decoded = _apple_decoded_transaction(user)
+    with patch('apps.payments.services._apple_api_signed_transaction', return_value='signed.jwt') as api_lookup, \
+         patch('apps.payments.services._verify_apple_jws', return_value=(decoded, 'production')):
+        verify_apple_purchase(user, {
+            'platform': 'ios',
+            'product_id': 'attentionminder.monthly',
+            'transaction_id': 'apple-transaction-789',
+            'verification_data': '',
+        })
+
+    api_lookup.assert_called_once_with('apple-transaction-789', 'production')
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_malformed_verification_data_falls_back_to_lookup(user):
+    with patch('apps.payments.services._apple_api_signed_transaction', return_value=None):
+        with pytest.raises(ValidationError) as exc_info:
+            verify_apple_purchase(user, {
+                'platform': 'ios',
+                'product_id': 'attentionminder.monthly',
+                'transaction_id': 'apple-transaction-404',
+                'verification_data': 'not-a-jws',
+            })
+
+    assert 'Apple could not find this transaction' in str(exc_info.value)
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_wrong_product_id_is_rejected(user):
+    decoded = _apple_decoded_transaction(user, productId='other.product')
+    with patch('apps.payments.services._verify_apple_jws', return_value=(decoded, 'production')):
+        with pytest.raises(ValidationError) as exc_info:
+            verify_apple_purchase(user, {
+                'platform': 'ios',
+                'product_id': 'attentionminder.monthly',
+                'transaction_id': 'apple-transaction-999',
+                'verification_data': 'eyJhbGciOiJFUzI1NiJ9.abc.def',
+            })
+
+    assert 'Product does not match the Apple transaction' in str(exc_info.value)
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_wrong_bundle_id_is_rejected(user):
+    decoded = _apple_decoded_transaction(user, bundleId='com.example.app')
+    with patch('apps.payments.services._verify_apple_jws', return_value=(decoded, 'production')):
+        with pytest.raises(ValidationError) as exc_info:
+            verify_apple_purchase(user, {
+                'platform': 'ios',
+                'product_id': 'attentionminder.monthly',
+                'transaction_id': 'apple-transaction-998',
+                'verification_data': 'eyJhbGciOiJFUzI1NiJ9.abc.def',
+            })
+
+    assert 'bundle ID does not match' in str(exc_info.value)
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_expired_transaction_is_rejected(user):
+    decoded = _apple_decoded_transaction(user, expiresDate=(timezone.now() - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ'))
+    with patch('apps.payments.services._verify_apple_jws', return_value=(decoded, 'production')):
+        with pytest.raises(ValidationError) as exc_info:
+            verify_apple_purchase(user, {
+                'platform': 'ios',
+                'product_id': 'attentionminder.monthly',
+                'transaction_id': 'apple-transaction-997',
+                'verification_data': 'eyJhbGciOiJFUzI1NiJ9.abc.def',
+            })
+
+    assert 'expired' in str(exc_info.value)
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_revoked_transaction_is_rejected(user):
+    decoded = _apple_decoded_transaction(user, revocationDate=(timezone.now() - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ'))
+    with patch('apps.payments.services._verify_apple_jws', return_value=(decoded, 'production')):
+        with pytest.raises(ValidationError) as exc_info:
+            verify_apple_purchase(user, {
+                'platform': 'ios',
+                'product_id': 'attentionminder.monthly',
+                'transaction_id': 'apple-transaction-996',
+                'verification_data': 'eyJhbGciOiJFUzI1NiJ9.abc.def',
+            })
+
+    assert 'revoked' in str(exc_info.value)
+
+
+@override_settings(APPLE_IAP_PRIVATE_KEY_FILE='', APPLE_IAP_KEY_ID='key', APPLE_IAP_ISSUER_ID='issuer', APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_apple_missing_private_key_file_raises_improperly_configured():
+    with pytest.raises(ImproperlyConfigured):
+        _apple_api_signed_transaction('transaction-123', 'production')
 
 
 @pytest.mark.django_db

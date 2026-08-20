@@ -57,6 +57,17 @@ def _value(obj, name, default=None):
     return getattr(obj, name, default)
 
 
+def _mask_transaction_id(value):
+    if value is None:
+        return ''
+    value = str(value).strip()
+    if not value:
+        return ''
+    if len(value) <= 8:
+        return value[:2] + '***' if len(value) > 4 else '***'
+    return value[:8] + '...'
+
+
 def _expected_account_id(user):
     digest = hmac.new(
         settings.SECRET_KEY.encode(),
@@ -225,8 +236,21 @@ def _verify_apple_jws(signed_transaction):
     errors = []
     for environment in ('production', 'sandbox'):
         try:
+            logger.info('Attempting Apple JWS verification: environment=%s', environment)
             return _apple_verifier(environment).verify_and_decode_signed_transaction(signed_transaction), environment
         except VerificationException as exc:
+            logger.warning(
+                'Apple JWS verification failed: environment=%s error_type=%s',
+                environment,
+                type(exc).__name__,
+            )
+            errors.append(exc)
+        except Exception as exc:
+            logger.exception(
+                'Unexpected Apple JWS verification failure: environment=%s error_type=%s',
+                environment,
+                type(exc).__name__,
+            )
             errors.append(exc)
     raise ValidationError({'verification_data': 'Apple could not verify this signed transaction.'}) from errors[-1]
 
@@ -235,34 +259,109 @@ def _apple_api_signed_transaction(transaction_id, environment):
     from appstoreserverlibrary.api_client import AppStoreServerAPIClient, APIException
     from appstoreserverlibrary.models.Environment import Environment
 
-    private_key_file = getattr(settings, 'APPLE_IAP_PRIVATE_KEY_FILE', '')
-    if not all([private_key_file, settings.APPLE_IAP_KEY_ID, settings.APPLE_IAP_ISSUER_ID]):
-        raise ImproperlyConfigured('Apple App Store Server API credentials are not configured')
-    env = Environment.PRODUCTION if environment == 'production' else Environment.SANDBOX
-    client = AppStoreServerAPIClient(
-        Path(private_key_file).read_bytes(),
-        settings.APPLE_IAP_KEY_ID,
-        settings.APPLE_IAP_ISSUER_ID,
-        settings.APPLE_BUNDLE_ID,
-        env,
-    )
+    if not transaction_id or not str(transaction_id).strip():
+        raise ValidationError({'transaction_id': 'Apple transaction ID is required for server-side verification.'})
+
+    private_key_file = getattr(settings, 'APPLE_IAP_PRIVATE_KEY_FILE', '').strip()
+    if not private_key_file:
+        raise ImproperlyConfigured('Apple App Store Server API private key file is not configured')
+    if not Path(private_key_file).is_file():
+        raise ImproperlyConfigured('Apple App Store Server API private key file is not readable')
+    if not settings.APPLE_IAP_KEY_ID or not settings.APPLE_IAP_ISSUER_ID:
+        raise ImproperlyConfigured('Apple App Store Server API key ID and issuer ID are not configured')
+
     try:
-        return client.get_transaction_info(transaction_id).signedTransactionInfo
-    except APIException:
-        return None
+        key_bytes = Path(private_key_file).read_bytes()
+    except OSError as exc:
+        logger.exception('Apple App Store API key file could not be read: path=%s', private_key_file)
+        raise ImproperlyConfigured('Apple App Store Server API private key file is not readable') from exc
+
+    env = Environment.PRODUCTION if environment == 'production' else Environment.SANDBOX
+    try:
+        client = AppStoreServerAPIClient(
+            key_bytes,
+            settings.APPLE_IAP_KEY_ID,
+            settings.APPLE_IAP_ISSUER_ID,
+            settings.APPLE_BUNDLE_ID,
+            env,
+        )
+    except (TypeError, ValueError, OSError) as exc:
+        logger.exception(
+            'Apple App Store API client configuration is invalid: environment=%s transaction_id=%s',
+            environment,
+            _mask_transaction_id(transaction_id),
+        )
+        raise ImproperlyConfigured('Apple App Store Server API credentials are invalid') from exc
+
+    try:
+        response = client.get_transaction_info(transaction_id)
+        return getattr(response, 'signedTransactionInfo', None)
+    except APIException as exc:
+        status = getattr(exc, 'status_code', None) or getattr(getattr(exc, 'response', None), 'status', None)
+        message = getattr(exc, 'message', str(exc))
+        if status in {400, 404}:
+            logger.warning(
+                'Apple transaction lookup returned not found/invalid: environment=%s transaction_id=%s status=%s',
+                environment,
+                _mask_transaction_id(transaction_id),
+                status,
+            )
+            return None
+        logger.warning(
+            'Apple App Store API request failed: environment=%s transaction_id=%s status=%s error_type=%s message=%s',
+            environment,
+            _mask_transaction_id(transaction_id),
+            status,
+            type(exc).__name__,
+            message,
+        )
+        raise ImproperlyConfigured(
+            f'Apple App Store API verification failed: {status or "unknown status"}'
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            'Unexpected Apple App Store API transaction lookup failure: environment=%s transaction_id=%s',
+            environment,
+            _mask_transaction_id(transaction_id),
+        )
+        raise ImproperlyConfigured('Apple App Store API verification failed unexpectedly') from exc
 
 
 def verify_apple_purchase(user, attrs, allow_inactive=False):
     if not settings.APPLE_BUNDLE_ID:
         raise ImproperlyConfigured('APPLE_BUNDLE_ID is not configured')
+
+    product_id = attrs.get('product_id')
+    transaction_id = str(attrs.get('transaction_id') or attrs.get('purchase_id') or '')
     signed_transaction = attrs.get('verification_data', '')
+    logger.info(
+        'Starting Apple purchase verification: product_id=%s transaction_id=%s verification_data_supplied=%s',
+        product_id,
+        _mask_transaction_id(transaction_id),
+        bool(signed_transaction),
+    )
+
     # Flutter may provide a legacy base64 app receipt here. The modern Apple
     # verifier expects a compact JWS; use the transaction ID API for receipts.
-    if signed_transaction.count('.') != 2:
+    if signed_transaction and signed_transaction.count('.') != 2:
+        logger.warning(
+            'Apple verification_data is not a signed JWS; attempting transaction lookup: product_id=%s transaction_id=%s',
+            product_id,
+            _mask_transaction_id(transaction_id),
+        )
         signed_transaction = ''
     if not signed_transaction:
         for environment in ('production', 'sandbox'):
-            signed_transaction = _apple_api_signed_transaction(attrs['transaction_id'], environment)
+            try:
+                logger.info(
+                    'Looking up Apple transaction via App Store API: environment=%s product_id=%s transaction_id=%s',
+                    environment,
+                    product_id,
+                    _mask_transaction_id(transaction_id),
+                )
+                signed_transaction = _apple_api_signed_transaction(transaction_id, environment)
+            except ImproperlyConfigured:
+                raise
             if signed_transaction:
                 break
         if not signed_transaction:
@@ -271,9 +370,21 @@ def verify_apple_purchase(user, attrs, allow_inactive=False):
 
     product_id = _value(decoded, 'productId')
     if product_id != attrs['product_id']:
+        logger.warning(
+            'Apple product mismatch: expected=%s actual=%s transaction_id=%s',
+            attrs.get('product_id'),
+            product_id,
+            _mask_transaction_id(transaction_id or _value(decoded, 'transactionId')),
+        )
         raise ValidationError({'product_id': 'Product does not match the Apple transaction.'})
     bundle_id = _value(decoded, 'bundleId')
     if bundle_id and bundle_id != settings.APPLE_BUNDLE_ID:
+        logger.warning(
+            'Apple bundle mismatch: expected=%s actual=%s transaction_id=%s',
+            settings.APPLE_BUNDLE_ID,
+            bundle_id,
+            _mask_transaction_id(transaction_id or _value(decoded, 'transactionId')),
+        )
         raise ValidationError({'verification_data': 'Apple transaction bundle ID does not match.'})
     expires_at = _dt(_value(decoded, 'expiresDate'))
     revocation_date = _dt(_value(decoded, 'revocationDate'))
@@ -291,6 +402,11 @@ def verify_apple_purchase(user, attrs, allow_inactive=False):
     else:
         expected_account = str(uuid.uuid5(uuid.NAMESPACE_URL, f'{settings.APPLE_BUNDLE_ID}:{user.pk}'))
     if app_account_token and app_account_token != expected_account:
+        logger.warning(
+            'Apple appAccountToken mismatch: user_id=%s transaction_id=%s',
+            user.pk,
+            _mask_transaction_id(transaction_id or _value(decoded, 'transactionId')),
+        )
         raise ValidationError({'verification_data': 'Apple transaction belongs to another account.'})
     if getattr(settings, 'STORE_REQUIRE_ACCOUNT_ASSOCIATION', False) and not app_account_token:
         raise ValidationError({'verification_data': 'Apple transaction has no application account association.'})
