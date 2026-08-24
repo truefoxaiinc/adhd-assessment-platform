@@ -9,12 +9,14 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.assessment.models import SelfAssessmentResult
 from apps.payments.models import (
     EntitlementStatus,
     StorePlatform,
     StorePurchase,
     SubscriptionEntitlement,
 )
+from apps.progresstracker.models import FaceAttentionSession
 from apps.users.models import OAuthAccount, OAuthProvider, PasswordResetOTP, Users
 from apps.users.services.password_reset_service import PasswordResetService
 from project_adhd import settings as project_settings
@@ -289,6 +291,43 @@ class TestJWTAuthenticationUserState:
         assert response.data['data']['has_active_subscription'] is False
         assert response.data['data']['subscription_status'] == 'inactive'
         assert response.data['data']['subscription_expires_at'] == ''
+        assert response.data['data']['questionnaire_done'] is False
+        assert response.data['data']['ai_assessment_done'] is False
+
+    def test_profile_returns_authenticated_user_assessment_completion(self, api_client):
+        user = Users.objects.create_user(
+            username='completed_assessments_user',
+            email='completed_assessments_user@test.com',
+            password='Password123!',
+            is_verified=True,
+        )
+        other_user = Users.objects.create_user(
+            username='other_completed_user',
+            email='other_completed_user@test.com',
+            password='Password123!',
+            is_verified=True,
+        )
+        SelfAssessmentResult.objects.create(
+            user=user,
+            completed_at=timezone.now(),
+        )
+        FaceAttentionSession.objects.create(
+            user=user,
+            session_id='profile-ai-assessment',
+            is_assessment=True,
+            concentration_score=7.5,
+        )
+        SelfAssessmentResult.objects.create(
+            user=other_user,
+            completed_at=timezone.now(),
+        )
+        self._authenticate_with_jwt(api_client, user)
+
+        response = api_client.get(self.profile_url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['questionnaire_done'] is True
+        assert response.data['data']['ai_assessment_done'] is True
 
     def test_profile_without_height_and_weight_is_complete(self, api_client):
         user = Users.objects.create_user(

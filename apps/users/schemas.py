@@ -1,5 +1,7 @@
 from rest_framework import serializers
+from apps.assessment.models import SelfAssessmentResult
 from apps.payments.models import SubscriptionEntitlement
+from apps.progresstracker.models import FaceAttentionSession
 from apps.users.models import Users
 
 
@@ -10,6 +12,8 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
     has_active_subscription = serializers.SerializerMethodField()
     subscription_status = serializers.SerializerMethodField()
     subscription_expires_at = serializers.SerializerMethodField()
+    questionnaire_done = serializers.SerializerMethodField()
+    ai_assessment_done = serializers.SerializerMethodField()
 
     class Meta:
         model = Users
@@ -28,6 +32,8 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
             'has_active_subscription',
             'subscription_status',
             'subscription_expires_at',
+            'questionnaire_done',
+            'ai_assessment_done',
         ]
 
     def _get_subscription_entitlement(self, instance):
@@ -69,6 +75,18 @@ class GetUserProfileDetailSchema(serializers.ModelSerializer):
         if not entitlement or not entitlement.expires_at:
             return None
         return serializers.DateTimeField().to_representation(entitlement.expires_at)
+
+    def get_questionnaire_done(self, instance):
+        return SelfAssessmentResult.objects.filter(
+            user_id=instance.pk,
+            completed_at__isnull=False,
+        ).exists()
+
+    def get_ai_assessment_done(self, instance):
+        return FaceAttentionSession.objects.filter(
+            user_id=instance.pk,
+            is_assessment=True,
+        ).exists()
 
     def to_representation(self, instance):
         datas = super().to_representation(instance)
