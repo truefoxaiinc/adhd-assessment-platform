@@ -306,6 +306,28 @@ class TestLearningContentApi:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'answers' in response.data['errors']
 
+    def test_attempt_submit_without_answers_preserves_empty_list_behavior(
+        self,
+        api_client,
+        user,
+        article,
+    ):
+        attempt = ContentAttempt.objects.create(
+            user=user,
+            content=article,
+            attempt_number=1,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.post(
+            f'/api/content/v1/attempts/{attempt.id}/submit',
+            {},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'answers' in response.data['errors']
+
     def test_content_submit_requires_answers(self, api_client, user, article):
         api_client.force_authenticate(user=user)
 

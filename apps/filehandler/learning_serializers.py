@@ -71,7 +71,11 @@ class EmptySerializer(serializers.Serializer):
 
 
 class AnswersSerializer(serializers.Serializer):
-    answers = SubmittedAnswerSerializer(many=True, required=False, default=list)
+    answers = SubmittedAnswerSerializer(many=True, required=False)
+
+    def validate(self, attrs):
+        attrs.setdefault('answers', [])
+        return attrs
 
     def validate_answers(self, value):
         question_ids = [answer['question_id'] for answer in value]
