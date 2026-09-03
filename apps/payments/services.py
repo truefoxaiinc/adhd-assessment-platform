@@ -190,9 +190,10 @@ def verify_google_purchase(user, attrs, allow_inactive=False):
 
     external_ids = payload.get('externalAccountIdentifiers') or {}
     linked_account = external_ids.get('obfuscatedExternalAccountId')
-    if linked_account and not hmac.compare_digest(linked_account, _expected_account_id(user)):
+    authenticated_user = user and getattr(user, 'is_authenticated', False)
+    if authenticated_user and linked_account and not hmac.compare_digest(linked_account, _expected_account_id(user)):
         raise ValidationError({'verification_data': 'Google Play purchase belongs to another account.'})
-    if getattr(settings, 'STORE_REQUIRE_ACCOUNT_ASSOCIATION', False) and not linked_account:
+    if authenticated_user and getattr(settings, 'STORE_REQUIRE_ACCOUNT_ASSOCIATION', False) and not linked_account:
         raise ValidationError({'verification_data': 'Google Play purchase has no application account association.'})
 
     return {
@@ -476,12 +477,15 @@ def _token_digest(token):
 
 
 @transaction.atomic
-def verify_guest_apple_purchase(attrs):
+def verify_guest_purchase(attrs):
     _validate_product_id(attrs['product_id'])
-    verified = verify_apple_purchase(None, attrs)
-    existing = StorePurchase.objects.select_for_update().filter(
-        platform=StorePlatform.IOS, original_transaction_id=verified['original_transaction_id']
-    ).first()
+    if attrs['platform'] == StorePlatform.IOS:
+        verified = verify_apple_purchase(None, attrs)
+        lookup = {'platform': StorePlatform.IOS, 'original_transaction_id': verified['original_transaction_id']}
+    else:
+        verified = verify_google_purchase(None, attrs)
+        lookup = {'platform': StorePlatform.ANDROID, 'store_purchase_id': verified['store_purchase_id']}
+    existing = StorePurchase.objects.select_for_update().filter(**lookup).first()
     if existing and not hasattr(existing, 'guest_entitlement'):
         raise ValidationError({'verification_data': 'This store purchase is already linked to an account.'})
     raw_token = secrets.token_urlsafe(48)
@@ -503,7 +507,7 @@ def verify_guest_apple_purchase(attrs):
         guest.save()
     else:
         from apps.users.models import Users
-        original_id = verified['original_transaction_id']
+        original_id = f"{verified['platform']}:{verified['original_transaction_id']}"
         backing_user = Users.objects.create_user(
             username=f'guest-{hashlib.sha256(original_id.encode()).hexdigest()[:32]}', email=None, is_verified=True
         )

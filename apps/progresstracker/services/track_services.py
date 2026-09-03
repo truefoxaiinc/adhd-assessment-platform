@@ -20,7 +20,7 @@ class ProgressTrackerActions:
     @staticmethod
     def get_days_for_the_file(user_instance):
         try:
-            if not user_instance:
+            if not user_instance or not getattr(user_instance, 'is_authenticated', False):
                 return [1]
 
             assessment_instance   = UserAssessmentDetails.objects.filter(user=user_instance).first()

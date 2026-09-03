@@ -7,7 +7,7 @@ from apps.progresstracker.services.track_services import ProgressTrackerActions
 from helpers.helper import get_token_user_or_none
 from rest_framework import status
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from apps.filehandler.services.files_services import FilesActions
@@ -75,7 +75,7 @@ class FetchS3Files(APIView):
 
 
 class ListAllFiles(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     @swagger_auto_schema(
         tags=["Files"],
@@ -112,7 +112,7 @@ class ListAllFiles(APIView):
             serializer = AdhdContentSerializer(
                 queryset,
                 many=True,
-                context={"unlocked_days": unlocked_days},
+                context={"unlocked_days": unlocked_days, "request": request},
             )
 
             return Response(

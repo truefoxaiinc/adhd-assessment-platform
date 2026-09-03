@@ -1,7 +1,7 @@
 from django.urls import path,re_path,include
 from . import views
 
-app_name = 'users'
+app_name = 'progresstracker'
    
 urlpatterns = [
     re_path(r'^v1/', include([

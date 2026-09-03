@@ -289,6 +289,52 @@ Apple may only send email on the first authorization, so first login must includ
 
 ### Native in-app subscriptions
 
+#### Guest purchase and restore flow
+
+Purchase verification accepts authenticated users and guests. Guests do not send
+an application account identifier. The App Store signed transaction or Google
+Play purchase token is the proof of purchase.
+
+`POST /api/payments/v1/payments/verify-in-app-purchase/`
+
+```json
+{
+  "platform": "ios",
+  "product_id": "attentionminder.monthly",
+  "transaction_id": "APPLE_TRANSACTION_ID",
+  "verification_data": "SIGNED_TRANSACTION_OR_RECEIPT_DATA",
+  "verification_source": "app_store",
+  "is_restore": false
+}
+```
+
+An unauthenticated successful verification returns `data.entitlement_token`,
+`data.subscription_status`, `data.expires_at`, and `data.is_guest`. Store the
+opaque token securely and send it on subsequent requests using either:
+
+```http
+Authorization: Bearer GUEST_ENTITLEMENT_TOKEN
+```
+
+or `X-Entitlement-Token`. Restore uses the same verification request with
+`is_restore: true`. Repeating valid store evidence is idempotent and returns the
+existing entitlement with a newly rotated guest token.
+
+Check access with `GET /api/payments/v1/payments/entitlement/`. Missing or invalid
+tokens return `401`; inactive entitlements return `403`; invalid store evidence
+returns `422`; and store verification/configuration failures return `500`.
+
+After registration, authenticate with the user's normal bearer token and call:
+
+`POST /api/payments/v1/payments/link-guest-entitlement/`
+
+```json
+{"entitlement_token": "GUEST_ENTITLEMENT_TOKEN"}
+```
+
+The operation atomically transfers the subscription and supported progress.
+An entitlement already linked to another account returns `409`.
+
 The app verifies Google Play and App Store subscriptions before granting an
 entitlement. The authenticated user comes only from the bearer token.
 

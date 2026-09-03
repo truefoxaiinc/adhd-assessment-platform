@@ -578,7 +578,10 @@ APPLE_ROOT_CERTIFICATE_FILES = [
 STORE_REQUIRE_ACCOUNT_ASSOCIATION = config('STORE_REQUIRE_ACCOUNT_ASSOCIATION', default=False, cast=bool)
 STORE_ALLOWED_PRODUCT_IDS = [
     product_id.strip()
-    for product_id in config('STORE_ALLOWED_PRODUCT_IDS', default='attentionminder.monthly').split(',')
+    for product_id in config(
+        'STORE_ALLOWED_PRODUCT_IDS',
+        default='attentionminder.monthly,attentionminder.quarterly',
+    ).split(',')
     if product_id.strip()
 ]
 

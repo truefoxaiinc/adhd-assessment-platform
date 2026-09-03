@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
@@ -11,7 +12,9 @@ from httplib2 import Response as HttpResponse
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
-from apps.payments.models import EntitlementStatus, StorePlatform, StorePurchase, SubscriptionEntitlement
+from apps.payments.models import EntitlementStatus, GuestEntitlement, StorePlatform, StorePurchase, SubscriptionEntitlement
+from apps.filehandler.models import AdhdContent
+from apps.progresstracker.models import ProgressTracker, UserAssessmentDetails
 from apps.payments.services import (
     _apple_api_signed_transaction,
     _google_service,
@@ -55,13 +58,20 @@ def verified_purchase(user, **overrides):
 
 
 @pytest.mark.django_db
-def test_guest_android_verification_is_rejected_without_requiring_login(client):
-    response = client.post(
-        '/api/payments/v1/payments/verify-in-app-purchase/',
-        {'platform': 'android', 'product_id': 'attentionminder.monthly', 'purchase_token': 'token'},
-        content_type='application/json',
+def test_guest_android_verification_returns_entitlement_token(client, user):
+    purchase = StorePurchase.objects.create(user=user, **verified_purchase(user))
+    entitlement = SubscriptionEntitlement.objects.create(
+        user=user, platform=purchase.platform, product_id=purchase.product_id,
+        status=purchase.status, expires_at=purchase.expires_at, source_purchase=purchase,
     )
-    assert response.status_code == 422
+    with patch('apps.payments.views.verify_guest_purchase', return_value=(entitlement, 'guest-token')):
+        response = client.post(
+            '/api/payments/v1/payments/verify-in-app-purchase/',
+            {'platform': 'android', 'product_id': 'attentionminder.monthly', 'purchase_token': 'token'},
+            format='json',
+        )
+    assert response.status_code == 200
+    assert response.data['data']['entitlement_token'] == 'guest-token'
 
 
 @pytest.mark.django_db
@@ -406,3 +416,75 @@ def test_expired_entitlement_is_not_verified(authed_client, user):
     assert response.status_code == 200
     assert response.data['data']['verified'] is False
     assert response.data['data']['subscription_status'] == 'expired'
+
+
+@pytest.mark.django_db
+def test_guest_token_accesses_premium_content_and_expiry_revokes_access(client):
+    guest_user = Users.objects.create_user(username='guest-content', email=None, is_verified=True)
+    purchase = StorePurchase.objects.create(
+        user=guest_user, platform=StorePlatform.IOS, product_id='attentionminder.monthly',
+        store_purchase_id='apple-original-content', original_transaction_id='apple-original-content',
+        latest_transaction_id='apple-latest-content', status=EntitlementStatus.ACTIVE,
+        expires_at=timezone.now() + timedelta(days=30),
+    )
+    SubscriptionEntitlement.objects.create(
+        user=guest_user, platform=purchase.platform, product_id=purchase.product_id,
+        status=purchase.status, expires_at=purchase.expires_at, source_purchase=purchase,
+    )
+    raw_token = 'secure-guest-content-token'
+    GuestEntitlement.objects.create(
+        purchase=purchase, backing_user=guest_user,
+        token_digest=hashlib.sha256(raw_token.encode()).hexdigest(),
+        token_expires_at=timezone.now() + timedelta(days=30),
+    )
+    UserAssessmentDetails.objects.create(
+        user=guest_user, last_completed=1, last_completed_at=timezone.now() - timedelta(days=1),
+    )
+    content = AdhdContent.objects.create(
+        title='Premium Day 2', is_management=True, age_group='adult', day=2,
+        file_type='video', order_number=1, status='published',
+    )
+    response = client.get(
+        f'/api/content/v1/contents/{content.pk}', HTTP_AUTHORIZATION=f'Bearer {raw_token}'
+    )
+    assert response.status_code == 200
+    purchase.expires_at = timezone.now() - timedelta(seconds=1)
+    purchase.status = EntitlementStatus.EXPIRED
+    purchase.save(update_fields=['expires_at', 'status'])
+    response = client.get(
+        f'/api/content/v1/contents/{content.pk}', HTTP_AUTHORIZATION=f'Bearer {raw_token}'
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_guest_entitlement_and_progress_link_to_registered_account(authed_client, user):
+    guest_user = Users.objects.create_user(username='guest-link', email=None, is_verified=True)
+    purchase = StorePurchase.objects.create(
+        user=guest_user, platform=StorePlatform.IOS, product_id='attentionminder.monthly',
+        store_purchase_id='apple-original-link', original_transaction_id='apple-original-link',
+        latest_transaction_id='apple-latest-link', status=EntitlementStatus.ACTIVE,
+        expires_at=timezone.now() + timedelta(days=30),
+    )
+    SubscriptionEntitlement.objects.create(
+        user=guest_user, platform=purchase.platform, product_id=purchase.product_id,
+        status=purchase.status, expires_at=purchase.expires_at, source_purchase=purchase,
+    )
+    ProgressTracker.objects.create(user=guest_user, day_number=1, file_type='video', order_number='1')
+    raw_token = 'secure-guest-link-token'
+    guest = GuestEntitlement.objects.create(
+        purchase=purchase, backing_user=guest_user,
+        token_digest=hashlib.sha256(raw_token.encode()).hexdigest(),
+        token_expires_at=timezone.now() + timedelta(days=30),
+    )
+    response = authed_client.post(
+        '/api/payments/v1/payments/link-guest-entitlement/',
+        {'entitlement_token': raw_token}, format='json',
+    )
+    assert response.status_code == 200
+    purchase.refresh_from_db()
+    guest.refresh_from_db()
+    assert purchase.user == user
+    assert guest.linked_user == user
+    assert guest.revoked_at is not None
+    assert ProgressTracker.objects.filter(user=user, day_number=1).exists()

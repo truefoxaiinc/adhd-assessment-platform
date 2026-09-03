@@ -23,7 +23,7 @@ from apps.payments.services import (
     process_google_rtdn,
     purchase_account_identifiers,
     link_guest_entitlement,
-    verify_guest_apple_purchase,
+    verify_guest_purchase,
     verify_in_app_purchase,
 )
 from helpers.exceptions.exceptions import safe_exception_response
@@ -71,9 +71,7 @@ class VerifyInAppPurchaseApiView(APIView):
         try:
             is_guest = not request.user.is_authenticated
             if is_guest:
-                if serializer.validated_data['platform'] != 'ios':
-                    return _error('Guest verification is supported for App Store purchases only.', status.HTTP_422_UNPROCESSABLE_ENTITY)
-                entitlement, guest_token = verify_guest_apple_purchase(serializer.validated_data)
+                entitlement, guest_token = verify_guest_purchase(serializer.validated_data)
             else:
                 entitlement = verify_in_app_purchase(request.user, serializer.validated_data)
             response = ResponseInfo(message='Purchase verified').response

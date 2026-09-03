@@ -21,7 +21,7 @@ class LearningContentService:
 
     @staticmethod
     def user_age_group(user):
-        return user.age_category or 'adult'
+        return getattr(user, 'age_category', None) or 'adult'
 
     @classmethod
     def unlocked_days(cls, user):

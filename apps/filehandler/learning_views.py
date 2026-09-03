@@ -4,7 +4,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.filehandler.learning_serializers import (
@@ -83,6 +83,7 @@ class LearningContentMixin:
 class LearningContentListApiView(LearningContentMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
     pagination_class = ContentPagination
+    permission_classes = [AllowAny]
 
     @swagger_auto_schema(
         tags=['Learning Content'],
@@ -116,19 +117,24 @@ class LearningContentListApiView(LearningContentMixin, generics.GenericAPIView):
             if content_type:
                 queryset = queryset.filter(file_type=content_type)
 
-            completed_attempts = ContentAttempt.objects.filter(
-                user=request.user,
-                content_id=OuterRef('pk'),
-                status=AttemptStatus.COMPLETED,
-            )
             queryset = queryset.annotate(
                 question_count=Count('questions', filter=Q(questions__is_active=True), distinct=True),
-                completed_at=Max(
-                    'attempts__completed_at',
-                    filter=Q(attempts__user=request.user, attempts__status=AttemptStatus.COMPLETED),
-                ),
-                user_completed=Exists(completed_attempts),
-            ).order_by('day', 'order_number', 'id')
+            )
+            if request.user.is_authenticated:
+                completed_attempts = ContentAttempt.objects.filter(
+                    user=request.user, content_id=OuterRef('pk'), status=AttemptStatus.COMPLETED,
+                )
+                queryset = queryset.annotate(
+                    completed_at=Max('attempts__completed_at', filter=Q(attempts__user=request.user, attempts__status=AttemptStatus.COMPLETED)),
+                    user_completed=Exists(completed_attempts),
+                )
+            else:
+                from django.db.models import BooleanField, DateTimeField, Value
+                queryset = queryset.annotate(
+                    completed_at=Value(None, output_field=DateTimeField()),
+                    user_completed=Value(False, output_field=BooleanField()),
+                )
+            queryset = queryset.order_by('day', 'order_number', 'id')
 
             total_days = queryset.aggregate(value=Max('day'))['value'] or 0
             unlocked_days = LearningContentService.unlocked_days(request.user)
@@ -157,6 +163,7 @@ class LearningContentListApiView(LearningContentMixin, generics.GenericAPIView):
 
 class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
+    permission_classes = [AllowAny]
 
     def get(self, request, content_id):
         try:
@@ -168,14 +175,14 @@ class LearningContentDetailApiView(LearningContentMixin, generics.GenericAPIView
                 .order_by('display_order', 'id')
             )
             question_count = len(questions)
-            completed = ContentAttempt.objects.filter(
-                user=request.user, content=content, status=AttemptStatus.COMPLETED
-            ).order_by('-completed_at').first()
-            active_attempt = ContentAttempt.objects.filter(
-                user=request.user,
-                content=content,
-                status=AttemptStatus.IN_PROGRESS,
-            ).order_by('-started_at').first()
+            completed = active_attempt = None
+            if request.user.is_authenticated:
+                completed = ContentAttempt.objects.filter(
+                    user=request.user, content=content, status=AttemptStatus.COMPLETED
+                ).order_by('-completed_at').first()
+                active_attempt = ContentAttempt.objects.filter(
+                    user=request.user, content=content, status=AttemptStatus.IN_PROGRESS,
+                ).order_by('-started_at').first()
             data = {
                 'id': content.id,
                 'attempt_id': str(active_attempt.id) if active_attempt else None,

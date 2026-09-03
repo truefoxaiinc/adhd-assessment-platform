@@ -69,9 +69,10 @@ def article():
 class TestLearningContentApi:
     list_url = '/api/content/v1/contents?section=management'
 
-    def test_content_list_requires_authentication(self, api_client):
+    def test_content_list_allows_guest_and_returns_lock_metadata(self, api_client):
         response = api_client.get(self.list_url)
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['has_active_subscription'] is False
 
     def test_content_list_filters_user_age_and_unpublished_content(self, api_client, user, article):
         AdhdContent.objects.create(
