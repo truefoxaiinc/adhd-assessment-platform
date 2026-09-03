@@ -20,6 +20,20 @@ class Migration(migrations.Migration):
                 ('purchase', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='guest_entitlement', to='payments.storepurchase')),
             ], options={'db_table': 'GuestEntitlement'},
         ),
-        migrations.AddConstraint(model_name='storepurchase', constraint=models.UniqueConstraint(condition=~models.Q(original_transaction_id=''), fields=('platform', 'original_transaction_id'), name='uniq_store_original_transaction')),
-        migrations.AddConstraint(model_name='storepurchase', constraint=models.UniqueConstraint(condition=~models.Q(latest_transaction_id=''), fields=('platform', 'latest_transaction_id'), name='uniq_store_latest_transaction')),
+        migrations.AddConstraint(
+            model_name='storepurchase',
+            constraint=models.UniqueConstraint(
+                condition=models.Q(platform='ios') & ~models.Q(original_transaction_id=''),
+                fields=('platform', 'original_transaction_id'),
+                name='uniq_store_original_transaction',
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name='storepurchase',
+            constraint=models.UniqueConstraint(
+                condition=models.Q(platform='ios') & ~models.Q(latest_transaction_id=''),
+                fields=('platform', 'latest_transaction_id'),
+                name='uniq_store_latest_transaction',
+            ),
+        ),
     ]

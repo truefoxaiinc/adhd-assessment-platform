@@ -39,8 +39,16 @@ class StorePurchase(models.Model):
         db_table = 'StorePurchase'
         constraints = [
             models.UniqueConstraint(fields=['platform', 'store_purchase_id'], name='uniq_store_purchase_evidence'),
-            models.UniqueConstraint(fields=['platform', 'original_transaction_id'], condition=~models.Q(original_transaction_id=''), name='uniq_store_original_transaction'),
-            models.UniqueConstraint(fields=['platform', 'latest_transaction_id'], condition=~models.Q(latest_transaction_id=''), name='uniq_store_latest_transaction'),
+            models.UniqueConstraint(
+                fields=['platform', 'original_transaction_id'],
+                condition=models.Q(platform=StorePlatform.IOS) & ~models.Q(original_transaction_id=''),
+                name='uniq_store_original_transaction',
+            ),
+            models.UniqueConstraint(
+                fields=['platform', 'latest_transaction_id'],
+                condition=models.Q(platform=StorePlatform.IOS) & ~models.Q(latest_transaction_id=''),
+                name='uniq_store_latest_transaction',
+            ),
         ]
         indexes = [
             models.Index(fields=['user', 'status']),
