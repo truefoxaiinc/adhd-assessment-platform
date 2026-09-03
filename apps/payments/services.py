@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets
 from datetime import datetime, timezone as datetime_timezone
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from googleapiclient.errors import HttpError
 
 from apps.payments.models import (
     EntitlementStatus,
+    GuestEntitlement,
     StoreNotificationEvent,
     StorePlatform,
     StorePurchase,
@@ -396,19 +398,21 @@ def verify_apple_purchase(user, attrs, allow_inactive=False):
     app_account_token = str(_value(decoded, 'appAccountToken') or '')
     import uuid
 
-    configured_namespace = getattr(settings, 'APPLE_APP_ACCOUNT_TOKEN_NAMESPACE', '')
-    if configured_namespace:
-        expected_account = str(uuid.uuid5(uuid.UUID(configured_namespace), str(user.pk)))
-    else:
-        expected_account = str(uuid.uuid5(uuid.NAMESPACE_URL, f'{settings.APPLE_BUNDLE_ID}:{user.pk}'))
-    if app_account_token and app_account_token != expected_account:
+    expected_account = None
+    if user and getattr(user, 'is_authenticated', False):
+        configured_namespace = getattr(settings, 'APPLE_APP_ACCOUNT_TOKEN_NAMESPACE', '')
+        if configured_namespace:
+            expected_account = str(uuid.uuid5(uuid.UUID(configured_namespace), str(user.pk)))
+        else:
+            expected_account = str(uuid.uuid5(uuid.NAMESPACE_URL, f'{settings.APPLE_BUNDLE_ID}:{user.pk}'))
+    if expected_account and app_account_token and app_account_token != expected_account:
         logger.warning(
             'Apple appAccountToken mismatch: user_id=%s transaction_id=%s',
             user.pk,
             _mask_transaction_id(transaction_id or _value(decoded, 'transactionId')),
         )
         raise ValidationError({'verification_data': 'Apple transaction belongs to another account.'})
-    if getattr(settings, 'STORE_REQUIRE_ACCOUNT_ASSOCIATION', False) and not app_account_token:
+    if expected_account and getattr(settings, 'STORE_REQUIRE_ACCOUNT_ASSOCIATION', False) and not app_account_token:
         raise ValidationError({'verification_data': 'Apple transaction has no application account association.'})
 
     transaction_id = str(_value(decoded, 'transactionId') or attrs.get('transaction_id') or '')
@@ -465,6 +469,85 @@ def verify_in_app_purchase(user, attrs):
     _validate_product_id(attrs['product_id'])
     verified = verify_google_purchase(user, attrs) if attrs['platform'] == StorePlatform.ANDROID else verify_apple_purchase(user, attrs)
     return save_verified_purchase(user, verified, attrs.get('is_restore', False))
+
+
+def _token_digest(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@transaction.atomic
+def verify_guest_apple_purchase(attrs):
+    _validate_product_id(attrs['product_id'])
+    verified = verify_apple_purchase(None, attrs)
+    existing = StorePurchase.objects.select_for_update().filter(
+        platform=StorePlatform.IOS, original_transaction_id=verified['original_transaction_id']
+    ).first()
+    if existing and not hasattr(existing, 'guest_entitlement'):
+        raise ValidationError({'verification_data': 'This store purchase is already linked to an account.'})
+    raw_token = secrets.token_urlsafe(48)
+    lifetime = timezone.timedelta(days=getattr(settings, 'GUEST_ENTITLEMENT_TOKEN_DAYS', 90))
+    if existing:
+        purchase = existing
+        for field, value in verified.items():
+            setattr(purchase, field, value)
+        purchase.is_restore = attrs.get('is_restore', False)
+        purchase.save()
+        entitlement = SubscriptionEntitlement.objects.get(user=purchase.user)
+        entitlement.status, entitlement.expires_at = purchase.status, purchase.expires_at
+        entitlement.product_id, entitlement.source_purchase = purchase.product_id, purchase
+        entitlement.save()
+        guest = purchase.guest_entitlement
+        guest.token_digest = _token_digest(raw_token)
+        guest.token_expires_at = min(purchase.expires_at, timezone.now() + lifetime)
+        guest.revoked_at = None
+        guest.save()
+    else:
+        from apps.users.models import Users
+        original_id = verified['original_transaction_id']
+        backing_user = Users.objects.create_user(
+            username=f'guest-{hashlib.sha256(original_id.encode()).hexdigest()[:32]}', email=None, is_verified=True
+        )
+        backing_user.set_unusable_password()
+        backing_user.save(update_fields=['password'])
+        entitlement = save_verified_purchase(backing_user, verified, attrs.get('is_restore', False))
+        GuestEntitlement.objects.create(
+            purchase=entitlement.source_purchase, backing_user=backing_user,
+            token_digest=_token_digest(raw_token),
+            token_expires_at=min(verified['expires_at'], timezone.now() + lifetime),
+        )
+    return entitlement, raw_token
+
+
+@transaction.atomic
+def link_guest_entitlement(user, raw_token):
+    guest = GuestEntitlement.objects.select_for_update().select_related('purchase').filter(
+        token_digest=_token_digest(raw_token)
+    ).first()
+    if not guest or not guest.is_token_active:
+        raise ValidationError({'entitlement_token': 'Invalid or expired guest entitlement token.'})
+    if guest.linked_user_id and guest.linked_user_id != user.pk:
+        raise ValidationError({'entitlement_token': 'This entitlement is already linked to another account.'})
+    if guest.linked_user_id == user.pk:
+        return SubscriptionEntitlement.objects.get(user=user)
+    old_user, purchase = guest.backing_user, guest.purchase
+    existing = SubscriptionEntitlement.objects.filter(user=user).first()
+    if existing and existing.source_purchase_id != purchase.pk:
+        raise ValidationError({'entitlement_token': 'This account already has a different entitlement.'})
+    SubscriptionEntitlement.objects.filter(user=old_user).update(user=user)
+    purchase.user = user
+    purchase.save(update_fields=['user'])
+    from apps.progresstracker.models import ProgressTracker, UserAssessmentDetails, ManagementActivitySession
+    from apps.filehandler.models import ContentAttempt
+    ProgressTracker.objects.filter(user=old_user).update(user=user)
+    ManagementActivitySession.objects.filter(user=old_user).update(user=user)
+    ContentAttempt.objects.filter(user=old_user).update(user=user)
+    assessment = UserAssessmentDetails.objects.filter(user=old_user).first()
+    if assessment and not UserAssessmentDetails.objects.filter(user=user).exists():
+        assessment.user = user
+        assessment.save(update_fields=['user'])
+    guest.linked_user, guest.revoked_at = user, timezone.now()
+    guest.save(update_fields=['linked_user', 'revoked_at', 'updated_at'])
+    return SubscriptionEntitlement.objects.get(user=user)
 
 
 def decode_google_rtdn(payload):

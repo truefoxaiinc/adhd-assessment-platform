@@ -16,11 +16,14 @@ from apps.payments.serializers import (
     EntitlementSerializer,
     GoogleNotificationSerializer,
     InAppPurchaseVerificationSerializer,
+    LinkGuestEntitlementSerializer,
 )
 from apps.payments.services import (
     process_apple_notification,
     process_google_rtdn,
     purchase_account_identifiers,
+    link_guest_entitlement,
+    verify_guest_apple_purchase,
     verify_in_app_purchase,
 )
 from helpers.exceptions.exceptions import safe_exception_response
@@ -53,7 +56,7 @@ def _error(message, http_status, errors=None):
 
 
 class VerifyInAppPurchaseApiView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     @swagger_auto_schema(tags=['Payments'], request_body=InAppPurchaseVerificationSerializer)
     def post(self, request):
@@ -66,9 +69,17 @@ class VerifyInAppPurchaseApiView(APIView):
             )
             return _error('Invalid purchase verification request', status.HTTP_400_BAD_REQUEST, serializer.errors)
         try:
-            entitlement = verify_in_app_purchase(request.user, serializer.validated_data)
+            is_guest = not request.user.is_authenticated
+            if is_guest:
+                if serializer.validated_data['platform'] != 'ios':
+                    return _error('Guest verification is supported for App Store purchases only.', status.HTTP_422_UNPROCESSABLE_ENTITY)
+                entitlement, guest_token = verify_guest_apple_purchase(serializer.validated_data)
+            else:
+                entitlement = verify_in_app_purchase(request.user, serializer.validated_data)
             response = ResponseInfo(message='Purchase verified').response
             response['data'] = EntitlementSerializer(entitlement).data
+            if is_guest:
+                response['data']['entitlement_token'] = guest_token
             return Response(response, status=status.HTTP_200_OK)
         except ValidationError as exc:
             logger.warning(
@@ -76,14 +87,14 @@ class VerifyInAppPurchaseApiView(APIView):
                 _purchase_log_context(request, serializer.validated_data),
                 exc.detail,
             )
-            return _error('Purchase verification failed', status.HTTP_400_BAD_REQUEST, exc.detail)
+            return _error('Purchase verification failed', status.HTTP_422_UNPROCESSABLE_ENTITY, exc.detail)
         except ImproperlyConfigured as exc:
             logger.error(
                 'In-app purchase service is not configured: context=%s error=%s',
                 _purchase_log_context(request, serializer.validated_data),
                 exc,
             )
-            return _error(str(exc), status.HTTP_503_SERVICE_UNAVAILABLE)
+            return _error(str(exc), status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as exc:
             return safe_exception_response(exc, context={'view': self})
 
@@ -101,7 +112,27 @@ class EntitlementApiView(APIView):
             'platform': '',
             'product_id': '',
             'expires_at': None,
+            'is_guest': bool(getattr(request, 'guest_entitlement', None)),
         }
+        return Response(response)
+
+
+class LinkGuestEntitlementApiView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(tags=['Payments'], request_body=LinkGuestEntitlementSerializer)
+    def post(self, request):
+        if request.auth.__class__.__name__ == 'GuestEntitlement':
+            return _error('A registered account is required to link a guest entitlement.', status.HTTP_401_UNAUTHORIZED)
+        serializer = LinkGuestEntitlementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            entitlement = link_guest_entitlement(request.user, serializer.validated_data['entitlement_token'])
+        except ValidationError as exc:
+            code = status.HTTP_409_CONFLICT if 'already linked' in str(exc.detail) else status.HTTP_422_UNPROCESSABLE_ENTITY
+            return _error('Guest entitlement could not be linked', code, exc.detail)
+        response = ResponseInfo(message='Guest entitlement linked').response
+        response['data'] = {'linked': True, **EntitlementSerializer(entitlement).data}
         return Response(response)
 
 

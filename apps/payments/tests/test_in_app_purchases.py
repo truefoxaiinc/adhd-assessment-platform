@@ -55,13 +55,38 @@ def verified_purchase(user, **overrides):
 
 
 @pytest.mark.django_db
-def test_verification_endpoint_requires_authentication(client):
+def test_guest_android_verification_is_rejected_without_requiring_login(client):
     response = client.post(
         '/api/payments/v1/payments/verify-in-app-purchase/',
         {'platform': 'android', 'product_id': 'attentionminder.monthly', 'purchase_token': 'token'},
         content_type='application/json',
     )
-    assert response.status_code in (401, 403)
+    assert response.status_code == 422
+
+
+@pytest.mark.django_db
+@override_settings(APPLE_BUNDLE_ID='attentionminder.trufoxai.com')
+def test_guest_apple_verification_returns_entitlement_token(client):
+    decoded = _apple_decoded_transaction(MagicMock(pk=1))
+    decoded.pop('appAccountToken')
+    with patch('apps.payments.services._verify_apple_jws', return_value=(decoded, 'sandbox')):
+        response = client.post(
+            '/api/payments/v1/payments/verify-in-app-purchase/',
+            {'platform': 'ios', 'product_id': 'attentionminder.monthly',
+             'transaction_id': 'apple-transaction-123',
+             'verification_data': 'eyJhbGciOiJFUzI1NiJ9.abc.def'},
+            format='json',
+        )
+    assert response.status_code == 200
+    assert response.data['data']['verified'] is True
+    assert response.data['data']['is_guest'] is True
+    assert response.data['data']['entitlement_token']
+    entitlement = client.get(
+        '/api/payments/v1/payments/entitlement/',
+        HTTP_X_ENTITLEMENT_TOKEN=response.data['data']['entitlement_token'],
+    )
+    assert entitlement.status_code == 200
+    assert entitlement.data['data']['is_guest'] is True
 
 
 @pytest.mark.django_db

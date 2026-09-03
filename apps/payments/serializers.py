@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.payments.models import StorePlatform, SubscriptionEntitlement
+from apps.payments.models import GuestEntitlement, StorePlatform, SubscriptionEntitlement
 
 
 class InAppPurchaseVerificationSerializer(serializers.Serializer):
@@ -32,13 +32,24 @@ class InAppPurchaseVerificationSerializer(serializers.Serializer):
 class EntitlementSerializer(serializers.ModelSerializer):
     verified = serializers.SerializerMethodField()
     subscription_status = serializers.CharField(source='status')
+    is_guest = serializers.SerializerMethodField()
 
     class Meta:
         model = SubscriptionEntitlement
-        fields = ['verified', 'subscription_status', 'platform', 'product_id', 'expires_at']
+        fields = ['verified', 'subscription_status', 'platform', 'product_id', 'expires_at', 'is_guest']
 
     def get_verified(self, instance):
         return instance.is_active
+
+    def get_is_guest(self, instance):
+        try:
+            return not instance.source_purchase.guest_entitlement.linked_user_id
+        except GuestEntitlement.DoesNotExist:
+            return False
+
+
+class LinkGuestEntitlementSerializer(serializers.Serializer):
+    entitlement_token = serializers.CharField(trim_whitespace=False)
 
 
 class AppleNotificationSerializer(serializers.Serializer):

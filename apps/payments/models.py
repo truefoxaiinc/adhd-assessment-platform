@@ -39,6 +39,8 @@ class StorePurchase(models.Model):
         db_table = 'StorePurchase'
         constraints = [
             models.UniqueConstraint(fields=['platform', 'store_purchase_id'], name='uniq_store_purchase_evidence'),
+            models.UniqueConstraint(fields=['platform', 'original_transaction_id'], condition=~models.Q(original_transaction_id=''), name='uniq_store_original_transaction'),
+            models.UniqueConstraint(fields=['platform', 'latest_transaction_id'], condition=~models.Q(latest_transaction_id=''), name='uniq_store_latest_transaction'),
         ]
         indexes = [
             models.Index(fields=['user', 'status']),
@@ -80,3 +82,22 @@ class StoreNotificationEvent(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['platform', 'event_id'], name='uniq_store_notification_event'),
         ]
+
+
+class GuestEntitlement(models.Model):
+    """Server-side identity for an App Store entitlement created without signup."""
+    purchase = models.OneToOneField(StorePurchase, on_delete=models.CASCADE, related_name='guest_entitlement')
+    backing_user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='guest_subscription')
+    linked_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='linked_guest_subscriptions', blank=True, null=True)
+    token_digest = models.CharField(max_length=64, unique=True)
+    token_expires_at = models.DateTimeField(db_index=True)
+    revoked_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'GuestEntitlement'
+
+    @property
+    def is_token_active(self):
+        return not self.revoked_at and self.token_expires_at > timezone.now()
