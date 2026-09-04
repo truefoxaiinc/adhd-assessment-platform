@@ -2,10 +2,37 @@ from unittest.mock import patch
 
 import pytest
 from rest_framework import status
-from rest_framework.exceptions import PermissionDenied
-from rest_framework.test import APIClient
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework.test import APIClient, APIRequestFactory
 
 from helpers.exceptions.exceptions import handle_exception
+
+
+def test_content_auth_failure_logs_safe_request_and_response():
+    request = APIRequestFactory().get(
+        '/api/content/v1/contents/12?token=query-secret',
+        HTTP_AUTHORIZATION='Bearer bearer-secret',
+        HTTP_X_ENTITLEMENT_TOKEN='guest-secret',
+        HTTP_COOKIE='sessionid=cookie-secret',
+    )
+    with patch('helpers.exceptions.exceptions.auth_logger.warning') as warning:
+        response = handle_exception(AuthenticationFailed('Invalid entitlement token.'), {'request': request})
+
+    assert response.status_code == 401
+    warning.assert_called_once()
+    message = warning.call_args.args[1]
+    assert 'invalid_guest_token' in message
+    assert '/api/content/v1/contents/12' in message
+    assert 'response_body' in message
+    for secret in ('query-secret', 'bearer-secret', 'guest-secret', 'cookie-secret'):
+        assert secret not in message
+
+
+def test_content_auth_logger_does_not_log_other_endpoints():
+    request = APIRequestFactory().get('/api/users/v1/users/get-user-profile')
+    with patch('helpers.exceptions.exceptions.auth_logger.warning') as warning:
+        handle_exception(AuthenticationFailed(), {'request': request})
+    warning.assert_not_called()
 
 
 @pytest.fixture

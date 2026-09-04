@@ -591,6 +591,28 @@ FIREBASE_INITIALIZE = config('FIREBASE_INITIALIZE', default=DJANGO_ENV != 'test'
 FIREBASE_CREDENTIALS_PATH = config('FIREBASE_CREDENTIALS_PATH', default='')
 
 # Celery Configuration Options
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'content_auth': {'format': '{asctime} {levelname} {name} {message}', 'style': '{'},
+    },
+    'handlers': {
+        'content_auth_console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'content_auth',
+            'level': 'WARNING',
+        },
+    },
+    'loggers': {
+        'content.authentication': {
+            'handlers': ['content_auth_console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+    },
+}
+
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://127.0.0.1:6379/2')
 CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://127.0.0.1:6379/2')
 CELERY_ACCEPT_CONTENT = ['application/json']

@@ -1,3 +1,4 @@
+import json
 import logging
 
 from django.http import JsonResponse
@@ -17,6 +18,39 @@ from rest_framework.views import exception_handler
 
 
 logger = logging.getLogger(__name__)
+auth_logger = logging.getLogger('content.authentication')
+
+
+def log_content_auth_failure(exc, context, response):
+    request = context.get('request')
+    if request is None or not request.path.startswith('/api/content/'):
+        return
+    if not isinstance(exc, (AuthenticationFailed, NotAuthenticated, PermissionDenied)):
+        return
+
+    # Never log raw credentials, cookies, query values or arbitrary exception text.
+    authorization = request.headers.get('Authorization', '')
+    parts = authorization.split()
+    scheme = 'Bearer' if parts and parts[0].lower() == 'bearer' else 'other'
+    reasons = {
+        'Invalid entitlement token.': 'invalid_guest_token',
+        'Entitlement token has expired or was revoked.': 'guest_token_expired_or_revoked',
+        'The entitlement is inactive.': 'guest_subscription_inactive',
+    }
+    reason = reasons.get(str(exc.detail), type(exc).__name__)
+    payload = {
+        'method': request.method,
+        'url': request.build_absolute_uri(request.path),
+        'query_present': bool(request.META.get('QUERY_STRING')),
+        'headers': {
+            'Authorization': f'{scheme} [REDACTED]' if authorization else '[ABSENT]',
+            'X-Entitlement-Token': '[REDACTED]' if request.headers.get('X-Entitlement-Token') else '[ABSENT]',
+        },
+        'reason': reason,
+        'status_code': response.status_code,
+        'response_body': response.data,
+    }
+    auth_logger.warning('content_auth_failure %s', json.dumps(payload))
 
 
 def get_response(message="", result=None, status=False, status_code=200):
@@ -126,6 +160,7 @@ def handle_exception(exc, context):
         get_safe_error_message(exc, error_response.data, status_code),
         get_exception_code(exc, status_code),
     )
+    log_content_auth_failure(exc, context, error_response)
     return error_response
 
 
