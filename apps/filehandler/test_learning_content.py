@@ -74,6 +74,31 @@ class TestLearningContentApi:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['data']['has_active_subscription'] is False
 
+    def test_content_detail_allows_anonymous_guest(self, api_client, article):
+        response = api_client.get(f'/api/content/v1/contents/{article.id}')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['data']['id'] == article.id
+        assert response.data['data']['is_locked'] is False
+        assert response.data['data']['attempt_id'] is None
+
+    @pytest.mark.parametrize('token', ['null', 'undefined'])
+    def test_content_detail_rejects_invalid_guest_credentials(self, api_client, article, token):
+        response = api_client.get(
+            f'/api/content/v1/contents/{article.id}',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_content_detail_blocks_locked_content_for_anonymous_guest(self, api_client, article):
+        article.day = 2
+        article.save(update_fields=['day'])
+
+        response = api_client.get(f'/api/content/v1/contents/{article.id}')
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
     def test_content_list_filters_user_age_and_unpublished_content(self, api_client, user, article):
         AdhdContent.objects.create(
             title='Draft Article',
