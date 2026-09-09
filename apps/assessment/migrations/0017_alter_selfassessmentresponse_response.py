@@ -3,7 +3,10 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ('assessment', '0015_selfassessmentquestions_age_group'),
+        (
+            'assessment',
+            '0016_rename_selfassess_age_gro_9eab1a_idx_selfassessm_age_gro_44412f_idx',
+        ),
     ]
 
     operations = [
