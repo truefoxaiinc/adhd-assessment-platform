@@ -25,10 +25,9 @@ class ResultService:
 
     @staticmethod
     def get_scored_response(response):
-        response_value = int(response.response or 0)
-        if response.question and response.question.category == 'N':
-            return 4 - response_value
-        return response_value
+        # The frontend submits the final score directly. Question category must
+        # not reverse or otherwise transform the submitted 0..4 value.
+        return int(response.response or 0)
 
     def calculate_selfassessment(self):
         responses = list(

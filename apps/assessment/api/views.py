@@ -90,7 +90,15 @@ class SelfAssessmentResponseApiView(generics.GenericAPIView):
     serializer_class = SelfAssessmentResponseSerializer
     permission_classes = (IsAuthenticated,)
 
-    @swagger_auto_schema(tags=["Self Assessment"],operation_id='Self Assessment Save',operation_description="This API used to save the response for the self assessment questionaire",)
+    @swagger_auto_schema(
+        tags=["Self Assessment"],
+        operation_id='Self Assessment Save',
+        operation_description=(
+            "Save self-assessment responses. Submitted response values are final scores: "
+            "Never=4, Rarely=3, Sometimes=2, Often=1, Very Often=0. "
+            "Only integer values from 0 through 4 are accepted; values are not reversed by the backend."
+        ),
+    )
     def post(self, request):
         try:
             serializer = self.serializer_class(data=request.data, context = {'request' : request})

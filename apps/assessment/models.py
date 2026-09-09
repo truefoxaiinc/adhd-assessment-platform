@@ -74,11 +74,11 @@ class SelfAssessmentResult(models.Model):
 class SelfAssessmentResponse(models.Model):
 
     class RESPONSE_CHOICES(models.TextChoices):
-        NEVER       = '0', 'Never'
-        RARELY      = '1', 'Rarely'
+        NEVER       = '4', 'Never'
+        RARELY      = '3', 'Rarely'
         SOMETIMES   = '2', 'Sometimes'
-        OFTEN       = '3', 'Often'
-        VERY_OFTEN  = '4', 'Very Often'
+        OFTEN       = '1', 'Often'
+        VERY_OFTEN  = '0', 'Very Often'
 
     result_entry    = models.ForeignKey(SelfAssessmentResult, on_delete=models.CASCADE, related_name="result_for_response",null=True, blank=True)
     question        = models.ForeignKey(SelfAssessmentQuestions, on_delete=models.CASCADE, related_name="assesment_question",null=True, blank=True)

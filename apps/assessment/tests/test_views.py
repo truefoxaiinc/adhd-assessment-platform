@@ -252,6 +252,52 @@ class TestAssessmentViews:
         assert response.data['data']['read_focus_total'] == 3
         assert response.data['data']['tenscore'] == 8
 
+    @pytest.mark.parametrize(
+        ('submitted_value', 'label'),
+        [(4, 'Never'), (3, 'Rarely'), (2, 'Sometimes'), (1, 'Often'), (0, 'Very Often')],
+    )
+    def test_save_response_uses_revised_value_mapping(
+        self, api_client, user, submitted_value, label
+    ):
+        api_client.force_authenticate(user=user)
+        question = SelfAssessmentQuestions.objects.create(
+            question_text=f'{label} Question',
+            category='RF',
+            is_for_adults=True,
+            is_active=True,
+        )
+
+        response = api_client.post(
+            '/api/assessment/v1/self-assessment/save-response',
+            {'assesment': [{'question': question.id, 'response': submitted_value}]},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['data']['raw_total'] == submitted_value
+        assert response.data['data']['read_focus_total'] == submitted_value
+        assert SelfAssessmentResponse.RESPONSE_CHOICES(str(submitted_value)).label == label
+
+    @pytest.mark.parametrize('submitted_value', [-1, 5])
+    def test_save_response_rejects_values_outside_score_boundaries(
+        self, api_client, user, submitted_value
+    ):
+        api_client.force_authenticate(user=user)
+        question = SelfAssessmentQuestions.objects.create(
+            question_text='Boundary Question',
+            category='RF',
+            is_for_adults=True,
+            is_active=True,
+        )
+
+        response = api_client.post(
+            '/api/assessment/v1/self-assessment/save-response',
+            {'assesment': [{'question': question.id, 'response': submitted_value}]},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_save_response_rejects_missing_answer_value(self, api_client, user):
         api_client.force_authenticate(user=user)
         question = SelfAssessmentQuestions.objects.create(
@@ -287,7 +333,7 @@ class TestAssessmentViews:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data['status'] is False
 
-    def test_self_assessment_score_uses_answered_question_max_score(self, user):
+    def test_self_assessment_score_uses_submitted_values_without_reversing(self, user):
         result = SelfAssessmentResult.objects.create(user=user)
         rf_question = SelfAssessmentQuestions.objects.create(
             question_text='RF Question',
@@ -314,9 +360,9 @@ class TestAssessmentViews:
 
         calculated = ResultService(result, is_adult=True).calculate_selfassessment()
 
-        assert calculated.raw_total == 8
-        assert calculated.tenscore == 10
-        assert calculated.result == 'Satisfactory to strong'
+        assert calculated.raw_total == 4
+        assert calculated.tenscore == 5
+        assert calculated.result == 'Moderate difficulty'
 
     def test_fetch_result(self, api_client, user):
         api_client.force_authenticate(user=user)

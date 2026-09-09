@@ -800,23 +800,31 @@ The API uses the authenticated JWT user. Clients must not send `user_id`.
 Response scale:
 
 ```text
-0 = Never
-1 = Rarely
+4 = Never
+3 = Rarely
 2 = Sometimes
-3 = Often
-4 = Very Often
+1 = Often
+0 = Very Often
 ```
 
-Normal questions:
+The request body accepts integer response values from `0` through `4`:
+
+```json
+{
+  "assesment": [
+    {
+      "question": 12,
+      "response": 1
+    }
+  ]
+}
+```
+
+In this example, `1` means **Often**. The submitted value is the final score for
+all question categories; the backend does not reverse or otherwise transform it.
 
 ```text
 scored_value = response
-```
-
-Reverse-scored category `N`:
-
-```text
-scored_value = 4 - response
 ```
 
 Final score:

@@ -23,8 +23,8 @@ import math
 
 class SelfAssessmentSubSerializer(serializers.ModelSerializer):
     question        = serializers.IntegerField(allow_null=False, required=True)
-    response        = serializers.ChoiceField(choices=SelfAssessmentResponse.RESPONSE_CHOICES.choices,allow_null=False, required=False)
-    answer          = serializers.ChoiceField(choices=SelfAssessmentResponse.RESPONSE_CHOICES.choices,allow_null=False, required=False, write_only=True)
+    response        = serializers.IntegerField(min_value=0, max_value=4, allow_null=False, required=False)
+    answer          = serializers.IntegerField(min_value=0, max_value=4, allow_null=False, required=False, write_only=True)
     text_response   = serializers.CharField(allow_null=True, required=False)
 
     class Meta:
