@@ -4,7 +4,7 @@ from apps.users.models import PasswordResetOTP, Users
 def get_user_by_email(email):
     if not email:
         return None
-    return Users.objects.filter(email=email).first()
+    return Users.objects.filter(email=email, is_deleted=False).first()
 
 
 def get_latest_pending_password_reset(user):

@@ -123,7 +123,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     
     def validate_email(self, value):
-        if not Users.objects.filter(email=value).exists():
+        if not Users.objects.filter(email=value, is_deleted=False).exists():
             raise serializers.ValidationError("No user found with this email address")
         return value
     
@@ -139,7 +139,7 @@ class PasswordResetOTPVerifySerializer(serializers.Serializer):
     
     def validate(self, attrs):
         email           = attrs.get('email', '')
-        user_instance   = get_object_or_none(Users,email=email)
+        user_instance   = get_object_or_none(Users,email=email, is_deleted=False)
 
         if not user_instance:
             raise serializers.ValidationError({"email": "No user found with this email address"})
@@ -159,7 +159,7 @@ class PasswordResetChangeSerializer(serializers.Serializer):
     def validate(self, attrs):
         email           = attrs.get('email', '')
         password        = attrs.get('password', '')
-        user_instance   = get_object_or_none(Users,email=email)
+        user_instance   = get_object_or_none(Users,email=email, is_deleted=False)
 
         if not user_instance:
             raise serializers.ValidationError({"email": "No user found with this email address"})

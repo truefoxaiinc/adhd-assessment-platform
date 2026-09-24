@@ -54,6 +54,21 @@ class TestPasswordResetSecurity:
         user.refresh_from_db()
         assert user.check_password('OldPassword123!')
 
+    def test_deleted_user_cannot_request_password_reset(self, api_client, user):
+        user.is_deleted = True
+        user.save(update_fields=['is_deleted'])
+
+        with patch('apps.users.tasks.EmailMultiAlternatives') as mocked_email:
+            response = api_client.post(
+                self.request_url,
+                {'email': user.email},
+                format='json',
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert PasswordResetOTP.objects.filter(user=user).exists() is False
+        mocked_email.assert_not_called()
+
     def test_reset_with_invalid_token_fails(self, api_client, user):
         reset, _ = PasswordResetOTP.create_for_user(user, otp='123456')
         reset.issue_reset_token()
