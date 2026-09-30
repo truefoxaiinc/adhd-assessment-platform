@@ -39,7 +39,7 @@ services:
       migrate: {condition: service_completed_successfully}
   beat:
     <<: *app
-    command: [celery, -A, project_adhd, beat, --loglevel=INFO]
+    command: [celery, -A, project_adhd, beat, --loglevel=INFO, --schedule=/tmp/celerybeat-schedule]
     depends_on:
       migrate: {condition: service_completed_successfully}
 
