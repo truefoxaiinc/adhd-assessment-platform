@@ -20,5 +20,5 @@ USER app
 RUN SECRET_KEY=build-only-secret JWT_SIGNING_KEY=build-only-jwt-key DATABASE_PASSWORD=build-only-password FACEBOOK_APP_SECRET=build-only-secret EMAIL_HOST_PASSWORD=build-only-password AWS_ACCESS_KEY_ID=build-only-key AWS_SECRET_ACCESS_KEY=build-only-secret FIREBASE_INITIALIZE=False python manage.py collectstatic --noinput
 EXPOSE 8000
 STOPSIGNAL SIGTERM
-ENTRYPOINT [entrypoint]
-CMD [daphne, -b, 0.0.0.0, -p, 8000, --proxy-headers, project_adhd.asgi:application]
+ENTRYPOINT ["entrypoint"]
+CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "--proxy-headers", "project_adhd.asgi:application"]
