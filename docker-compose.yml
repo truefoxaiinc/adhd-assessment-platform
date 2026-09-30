@@ -1,24 +1,60 @@
+name: adhd-minder
+
+x-app: &app
+  image: adhd-minder-backend:${IMAGE_TAG:-latest}
+  build: {context: ., target: runtime}
+  env_file: [.env.production]
+  environment:
+    DJANGO_ENV: production
+    DEBUG: False
+    DB_HOST: postgres
+    REDIS_CACHE_URL: redis://127.0.0.1:6379/1
+    CELERY_BROKER_URL: redis://127.0.0.1:6379/2
+    CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/2
+  init: true
+  restart: unless-stopped
+  network_mode: service:redis
+
 services:
-
-  backend:
-    build: .
+  postgres:
+    image: postgres:16-alpine
     restart: unless-stopped
-
-    command: >
-      sh -c "
-      python manage.py migrate &&
-      daphne -b 0.0.0.0 -p 8000 project_adhd.asgi:application
-      "
-
-    env_file:
-      - .env
-
-    ports:
-      - "8000:8000"
-
+    environment:
+      POSTGRES_DB: adhd_minder
+      POSTGRES_USER: adhd_minder
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [backend]
+  migrate:
+    <<: *app
+    restart: no
+    command: [python, manage.py, migrate, --noinput]
+    depends_on: [postgres, redis]
+  web:
+    <<: *app
+    command: [daphne, -b, 0.0.0.0, -p, '8000', --proxy-headers, project_adhd.asgi:application]
     depends_on:
-      - redis
-
+      migrate: {condition: service_completed_successfully}
   redis:
-    image: redis:alpine
+    image: redis:7.4-alpine
     restart: unless-stopped
+    command: [redis-server, --appendonly, yes]
+    volumes: [redis_data:/data]
+    ports: [127.0.0.1:8000:8000]
+    networks: [backend]
+  worker:
+    <<: *app
+    command: [celery, -A, project_adhd, worker, --loglevel=INFO]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  beat:
+    <<: *app
+    command: [celery, -A, project_adhd, beat, --loglevel=INFO]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+volumes:
+  postgres_data:
+  redis_data:
+networks:
+  backend:
