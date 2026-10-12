@@ -13,6 +13,7 @@ x-app: &app
   init: true
   restart: unless-stopped
   networks: [backend]
+  volumes: [media_data:/app/media]
 
 services:
   migrate:
@@ -44,6 +45,7 @@ services:
       migrate: {condition: service_completed_successfully}
 
 volumes:
+  media_data:
   redis_data:
 networks:
   backend:

@@ -28,7 +28,7 @@ django-redis
 drf-yasg Swagger
 WhiteNoise
 django-cors-headers
-AWS S3 / django-storages
+Local filesystem media storage
 Unfold admin
 Docker / Docker Compose
 ```
@@ -59,7 +59,7 @@ Services / serializers / permissions
         |
         +-- PostgreSQL for persistent data
         +-- Redis for API response cache and Channels layer
-        +-- S3 for media/file storage when configured
+        +-- Local filesystem for media/file storage
         +-- SMTP for password reset OTP email
 ```
 
@@ -137,11 +137,6 @@ APPLE_OAUTH_CLIENT_IDS=com.your.ios.bundle.id,com.your.apple.service.id
 REDIS_CACHE_URL=redis://127.0.0.1:6379/1
 CELERY_BROKER_URL=redis://127.0.0.1:6379/2
 CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2
-
-AWS_ACCESS_KEY_ID=your_aws_access_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-AWS_STORAGE_BUCKET_NAME=s-adhd
-AWS_S3_REGION_NAME=us-east-1
 
 EMAIL_HOST=smtp.gmail.com
 EMAIL_HOST_USER=your_email
@@ -488,8 +483,11 @@ Assessment and management content listing
 Age-group based content filtering
 Progress-based locked/unlocked day calculation
 Feedback storage
-S3 upload helpers where enabled
+Local media uploads through Django storage
 ```
+
+Docker Compose persists uploaded files in the `media_data` volume. In production,
+the reverse proxy must serve `/media/` from the application media volume.
 
 `list-files` filters by:
 

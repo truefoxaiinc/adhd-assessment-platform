@@ -15,9 +15,9 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app . .
 COPY --chown=app:app docker/entrypoint.sh /usr/local/bin/entrypoint
-RUN chmod 0555 /usr/local/bin/entrypoint && mkdir -p /app/tmp_uploads && chown -R app:app /app/tmp_uploads
+RUN chmod 0555 /usr/local/bin/entrypoint && mkdir -p /app/media /app/tmp_uploads && chown -R app:app /app/media /app/tmp_uploads
 USER app
-RUN SECRET_KEY=build-only-secret JWT_SIGNING_KEY=build-only-jwt-key DATABASE_PASSWORD=build-only-password FACEBOOK_APP_SECRET=build-only-secret EMAIL_HOST_PASSWORD=build-only-password AWS_ACCESS_KEY_ID=build-only-key AWS_SECRET_ACCESS_KEY=build-only-secret FIREBASE_INITIALIZE=False python manage.py collectstatic --noinput
+RUN SECRET_KEY=build-only-secret JWT_SIGNING_KEY=build-only-jwt-key DATABASE_PASSWORD=build-only-password FACEBOOK_APP_SECRET=build-only-secret EMAIL_HOST_PASSWORD=build-only-password FIREBASE_INITIALIZE=False python manage.py collectstatic --noinput
 EXPOSE 8000
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["entrypoint"]

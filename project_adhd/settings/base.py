@@ -21,8 +21,6 @@ from django.core.exceptions import ImproperlyConfigured
 
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
-from boto3.s3.transfer import TransferConfig
-from botocore.config import Config
 
 SENTRY_DSN = config('SENTRY_DSN', default='')
 SENTRY_SEND_DEFAULT_PII = config('SENTRY_SEND_DEFAULT_PII', default=False, cast=bool)
@@ -147,7 +145,6 @@ LOCAL_APPS = [
     'apps.notifications',
 ]
 
-CKEDITOR_5_FILE_STORAGE = 'project_adhd.storage_backends.ArticleImageStorage'
 CKEDITOR_5_FILE_UPLOAD_PERMISSION = 'staff'
 CKEDITOR_5_ALLOW_ALL_FILE_TYPES = False
 CKEDITOR_5_UPLOAD_FILE_TYPES = ['jpg', 'jpeg', 'png', 'gif', 'webp']
@@ -197,7 +194,6 @@ THIRD_PARTY_APPS = [
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
-    'storages',
     'channels',
     'import_export',
 ]
@@ -416,9 +412,6 @@ USE_I18N = True
 
 USE_TZ = True
 
-AWS_LOCATION = 'media'
-AWS_PRIVATE_MEDIA_LOCATION = 'private'
-
 # Static files (CSS, JavaScript, etc.)
 STATIC_URL = '/assets/'  # URL prefix for static files
 STATIC_ROOT = os.path.join(BASE_DIR, 'assets')  # Where static files will be collected by collectstatic
@@ -428,50 +421,17 @@ STATICFILES_DIRS = (
     os.path.join(BASE_DIR, 'static'),  # Update to a cleaner BASE_DIR usage
 )
 
-AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY")
-AWS_STORAGE_BUCKET_NAME = config("AWS_STORAGE_BUCKET_NAME", default="s-adhd")
-AWS_S3_REGION_NAME = 'us-east-1' 
-# These are important for avoiding signature issues
-AWS_S3_SIGNATURE_VERSION = 's3v4'
-AWS_S3_ADDRESSING_STYLE = 'virtual'
-AWS_S3_USE_SSL = True
-AWS_S3_VERIFY = True
-AWS_DEFAULT_ACL = None
-AWS_QUERYSTRING_AUTH = True
-AWS_S3_FILE_OVERWRITE = False
-AWS_S3_OBJECT_PARAMETERS = {
-    "CacheControl": "max-age=86400",
-}
-AWS_S3_MAX_MEMORY_SIZE = 100 * 1024 * 1024
-AWS_S3_TRANSFER_CONFIG = TransferConfig(
-    multipart_threshold=64 * 1024 * 1024,
-    multipart_chunksize=16 * 1024 * 1024,
-    max_concurrency=10,
-    use_threads=True,
-)
-AWS_S3_CLIENT_CONFIG = Config(
-    signature_version=AWS_S3_SIGNATURE_VERSION,
-    s3={"addressing_style": AWS_S3_ADDRESSING_STYLE},
-    max_pool_connections=20,
-    connect_timeout=60,
-    read_timeout=300,
-    retries={"max_attempts": 5, "mode": "standard"},
-)
-
-# Media files are stored on S3 through django-storages. MEDIA_ROOT is kept only
-# as a temporary upload directory for Django's upload handlers, not as the final
-# media storage location.
-MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{AWS_LOCATION}/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "tmp_uploads")
-FILE_UPLOAD_TEMP_DIR = MEDIA_ROOT
+# Media files are stored on the local filesystem.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+FILE_UPLOAD_TEMP_DIR = os.path.join(BASE_DIR, "tmp_uploads")
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1100 * 1024 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = config('DATA_UPLOAD_MAX_NUMBER_FIELDS', default=50000, cast=int)
 
 STORAGES = {
     "default": {
-        "BACKEND": "project_adhd.storage_backends.LargeMediaStorage",
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
