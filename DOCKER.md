@@ -9,22 +9,21 @@ docker compose up -d
 docker compose ps
 ```
 
-The stack connects to AWS RDS PostgreSQL and includes persistent Redis, migrations,
-Daphne for HTTP and WebSockets, a Celery worker, and Celery Beat. It binds to
-`127.0.0.1:8000`; place a
-TLS reverse proxy in front of it. Create an admin with:
+The stack includes persistent PostgreSQL and Redis, migrations, Daphne for HTTP
+and WebSockets, a Celery worker, and Celery Beat. It binds to `127.0.0.1:8000`;
+place a TLS reverse proxy in front of it. Create an admin with:
 
 ```sh
 docker compose exec web python manage.py createsuperuser
 ```
 
-## AWS RDS
+## PostgreSQL
 
-Create a PostgreSQL RDS instance and set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
-`DATABASE_PASSWORD`, and `PGSSLMODE=require` in `.env.production`. The RDS security group must allow
-TCP port 5432 inbound from the backend host's security group (preferred) or its
-private IP—not from `0.0.0.0/0`. Keep RDS private when the backend runs in the same
-VPC, enable storage encryption and automated backups, and require SSL connections.
+Set `DB_HOST=postgres`, `DB_PORT=5432`, `DB_NAME`, `DB_USER`,
+`DATABASE_PASSWORD`, and `PGSSLMODE=disable` in `.env.production`. Set matching
+`POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` values for the database
+container. PostgreSQL is private to the Compose network and persists in the
+`postgres_data` volume.
 
 Before deployment, verify connectivity from the Docker host:
 
@@ -32,9 +31,19 @@ Before deployment, verify connectivity from the Docker host:
 docker compose run --rm migrate python manage.py migrate --check
 ```
 
-On first deployment, `docker compose up -d` runs migrations against RDS before the
-web, worker, and beat services start.
+On first deployment, `docker compose up -d` waits for PostgreSQL to become healthy
+and runs migrations before the web, worker, and beat services start.
 
-Application settings currently use `127.0.0.1` for the Channels Redis connection,
-so app services share Redis's network namespace. This supports one Docker host.
-Make that Redis URL configurable before scaling web containers across hosts.
+The build uses host networking to accommodate dedicated servers whose Docker
+bridge cannot reach external DNS during `apt-get` and package installation.
+
+Uploaded media is bind-mounted at `./media`. Before first startup, create the
+directory and grant it to the container user:
+
+```sh
+mkdir -p media
+sudo chown -R 10001:10001 media
+```
+
+Configure the host reverse proxy to serve `/media/` from this directory. Do not
+run `docker compose down -v` unless you intend to delete PostgreSQL and Redis data.
