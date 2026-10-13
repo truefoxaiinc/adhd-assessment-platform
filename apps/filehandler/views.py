@@ -10,6 +10,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from apps.filehandler.services.files_services import FilesActions
+from apps.progresstracker.models import ProgressTracker
 from .models import AdhdContent, ContentStatus
 from drf_yasg import openapi
         
@@ -39,6 +40,14 @@ class ListAllFiles(APIView):
             user_instance = get_token_user_or_none(request)
             age_group = user_instance.age_category if user_instance and user_instance.age_category else "adult"
             unlocked_days = ProgressTrackerActions.get_days_for_the_file(user_instance) or [1]
+            completed_content_keys = set()
+            if user_instance and user_instance.is_authenticated:
+                completed_content_keys = {
+                    (day_number, file_type, str(order_number))
+                    for day_number, file_type, order_number in ProgressTracker.objects.filter(
+                        user=user_instance,
+                    ).values_list("day_number", "file_type", "order_number")
+                }
 
             queryset = (
                 AdhdContent.objects
@@ -53,7 +62,11 @@ class ListAllFiles(APIView):
             serializer = AdhdContentSerializer(
                 queryset,
                 many=True,
-                context={"unlocked_days": unlocked_days, "request": request},
+                context={
+                    "unlocked_days": unlocked_days,
+                    "completed_content_keys": completed_content_keys,
+                    "request": request,
+                },
             )
 
             return Response(

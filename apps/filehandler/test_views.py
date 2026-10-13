@@ -51,7 +51,7 @@ def adult_day_one_video():
 @pytest.mark.django_db
 class TestFileHandlerViews:
     UPDATE_PROGRESS_URL = '/api/filehandler/v1/filehandler/update-learning-progress/'
-    LIST_FILES_URL = '/api/filehandler/v1/filehandler/list-all-files/'
+    LIST_FILES_URL = '/api/filehandler/v1/filehandler/list-files'
 
     def test_update_learning_progress_saves_authenticated_user_progress(self, api_client, user, adult_day_one_video):
         api_client.force_authenticate(user=user)
@@ -91,6 +91,56 @@ class TestFileHandlerViews:
         assert activity['file_type'] == 'activity'
         assert activity['activity_name'] == 'memory_flip'
         assert activity['file'] in ('', None)
+        assert activity['is_completed'] is False
+
+    def test_list_management_files_marks_only_current_users_completed_content(self, api_client, user):
+        completed_video = AdhdContent.objects.create(
+            title='Completed video',
+            file='adhd_content/completed-video.mp4',
+            is_management=True,
+            age_group='adult',
+            day=1,
+            file_type='video',
+            order_number=1,
+        )
+        pending_activity = AdhdContent.objects.create(
+            title='Pending activity',
+            is_management=True,
+            age_group='adult',
+            day=1,
+            file_type='activity',
+            activity_name='memory_flip',
+            order_number=2,
+        )
+        other_user = Users.objects.create_user(
+            username='other_list_user',
+            email='other_list_user@test.com',
+            password='Password123!',
+            is_verified=True,
+            dob='1990-01-01',
+        )
+        ProgressTracker.objects.create(
+            user=user,
+            day_number=completed_video.day,
+            file_type=completed_video.file_type,
+            order_number=str(completed_video.order_number),
+        )
+        ProgressTracker.objects.create(
+            user=other_user,
+            day_number=pending_activity.day,
+            file_type=pending_activity.file_type,
+            order_number=str(pending_activity.order_number),
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(self.LIST_FILES_URL, {'is_management': 'true'})
+
+        assert response.status_code == status.HTTP_200_OK
+        completion_by_id = {
+            item['id']: item['is_completed'] for item in response.data['data']
+        }
+        assert completion_by_id[completed_video.id] is True
+        assert completion_by_id[pending_activity.id] is False
 
     def test_update_learning_progress_saves_activity_progress(self, api_client, user):
         activity = AdhdContent.objects.create(

@@ -14,6 +14,7 @@ class VideoUploadSerializer(serializers.Serializer):
 
 class AdhdContentSerializer(serializers.ModelSerializer):
     is_locked = serializers.SerializerMethodField()
+    is_completed = serializers.SerializerMethodField()
     file = serializers.SerializerMethodField()
 
     class Meta:
@@ -30,6 +31,7 @@ class AdhdContentSerializer(serializers.ModelSerializer):
             'order_number',
             'created_at',
             'is_locked',
+            'is_completed',
         ]
 
     def get_is_locked(self, obj):
@@ -39,6 +41,11 @@ class AdhdContentSerializer(serializers.ModelSerializer):
             return False
 
         return obj.day not in unlocked_days
+
+    def get_is_completed(self, obj):
+        """Return completion for the authenticated user, never another user."""
+        completed_content_keys = self.context.get("completed_content_keys", set())
+        return (obj.day, obj.file_type, str(obj.order_number)) in completed_content_keys
 
     def get_file(self, obj):
         if self.get_is_locked(obj) or not obj.file:
