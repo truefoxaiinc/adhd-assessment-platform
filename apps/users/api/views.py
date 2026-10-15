@@ -3,7 +3,7 @@ from drf_yasg.utils import swagger_auto_schema
 from helpers.helper import get_object_or_none, get_token_user_or_none
 from helpers.response import ResponseInfo
 from helpers.exceptions.exceptions import safe_exception_response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from helpers.custom_messages import _success
@@ -347,6 +347,8 @@ class SocialLoginView(APIView):
     serializer_class = SocialLoginSerializer
     apple_jwks_url = 'https://appleid.apple.com/auth/keys'
     apple_issuer = 'https://appleid.apple.com'
+    authentication_classes = []
+    permission_classes = [AllowAny]
 
     def __init__(self, **kwargs):
         self.response_format = ResponseInfo().response

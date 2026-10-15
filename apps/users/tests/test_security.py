@@ -631,6 +631,7 @@ class TestGoogleSocialLogin:
                 self.social_login_url,
                 {'provider': 'google', 'id_token': 'google.id.token'},
                 format='json',
+                HTTP_AUTHORIZATION='Bearer invalid',
             )
 
         assert response.status_code == status.HTTP_201_CREATED
