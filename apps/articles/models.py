@@ -1,4 +1,5 @@
 from django.db import models
+from django_ckeditor_5.fields import CKEditor5Field
 
 # Create your models here.
 from django.utils.text import slugify
@@ -18,7 +19,7 @@ class Article(models.Model):
     title                 = models.CharField(max_length=255)
     slug                  = models.SlugField(unique=True, blank=True)
     short_description     = models.TextField(blank=True)
-    content               = models.TextField()
+    content               = CKEditor5Field(config_name='article')
     featured_image        = models.ImageField(upload_to="articles/",blank=True,null=True)
     author                = models.ForeignKey(User,on_delete=models.SET_NULL,null=True,related_name="articles")
     status                = models.CharField(max_length=20,choices=STATUS_CHOICES,default="draft",db_index=True)
