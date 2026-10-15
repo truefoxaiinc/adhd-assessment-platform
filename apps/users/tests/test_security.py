@@ -684,7 +684,7 @@ class TestGoogleSocialLogin:
         ).count() == 1
 
     @override_settings(GOOGLE_OAUTH_CLIENT_IDS=['allowed-client.apps.googleusercontent.com'])
-    def test_google_token_requires_configured_audience_and_verified_email(self, monkeypatch):
+    def test_google_token_requires_configured_audience_and_verified_email(self, monkeypatch, caplog):
         view = __import__(
             'apps.users.api.views',
             fromlist=['SocialLoginView'],
@@ -704,12 +704,15 @@ class TestGoogleSocialLogin:
             view._verify_google_token('google.id.token')
 
         assert 'audience mismatch' in str(exc_info.value.detail['id_token'])
+        assert 'received_audience=' in caplog.text
+        assert 'different-client.apps.googleusercontent.com' in caplog.text
+        assert 'allowed-client.apps.googleusercontent.com' in caplog.text
 
     @override_settings(GOOGLE_OAUTH_CLIENT_IDS=['allowed-client.apps.googleusercontent.com'])
-    def test_invalid_google_token_returns_unauthorized(self, api_client):
+    def test_invalid_google_token_returns_unauthorized(self, api_client, caplog):
         with patch(
             'apps.users.api.views.google_id_token.verify_oauth2_token',
-            side_effect=ValueError('bad signature'),
+            side_effect=ValueError('bad signature in google.id.token'),
         ):
             response = api_client.post(
                 self.social_login_url,
@@ -720,6 +723,8 @@ class TestGoogleSocialLogin:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.data['status'] is False
         assert response.data['errors']['id_token'] == 'Invalid or expired Google ID token'
+        assert 'exception=ValueError message=bad signature in [REDACTED]' in caplog.text
+        assert 'invalid.google.token' not in caplog.text
 
 
 @pytest.mark.django_db

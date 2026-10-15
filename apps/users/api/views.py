@@ -449,13 +449,34 @@ class SocialLoginView(APIView):
                 token,
                 google_requests.Request(),
             )
-        except (ValueError, google_auth_exceptions.GoogleAuthError):
+        except (ValueError, google_auth_exceptions.GoogleAuthError) as exc:
+            safe_error = str(exc).replace(token, '[REDACTED]')
+            safe_error = re.sub(
+                r'(?<![\w-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![\w-])',
+                '[REDACTED_JWT]',
+                safe_error,
+            )
+            safe_error = re.sub(
+                r'(?i)\b(access_token|id_token|client_secret|token)=\S+',
+                r'\1=[REDACTED]',
+                safe_error,
+            )
+            logger.warning(
+                'Google ID token verification failed: exception=%s message=%s',
+                type(exc).__name__,
+                safe_error[:500],
+            )
             raise ValidationError({'id_token': 'Invalid or expired Google ID token'})
 
         if payload.get('iss') not in ['accounts.google.com', 'https://accounts.google.com']:
             raise ValidationError({'id_token': 'Invalid Google token issuer'})
 
         if payload.get('aud') not in settings.GOOGLE_OAUTH_CLIENT_IDS:
+            logger.warning(
+                'Google token audience mismatch: received_audience=%r configured_audiences=%r',
+                payload.get('aud'),
+                settings.GOOGLE_OAUTH_CLIENT_IDS,
+            )
             raise ValidationError({'id_token': 'Google token audience mismatch'})
 
         if not payload.get('email'):
