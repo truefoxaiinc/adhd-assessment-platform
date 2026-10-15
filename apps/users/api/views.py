@@ -762,6 +762,11 @@ class SocialLoginView(APIView):
             )
 
         except ValidationError as e:
+            logger.warning(
+                'Social login validation failed: provider=%s errors=%s',
+                provider,
+                e.detail,
+            )
             return self._error_response(
                 'Social login validation failed',
                 status.HTTP_401_UNAUTHORIZED,
